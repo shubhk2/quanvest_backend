@@ -552,7 +552,8 @@ async def ask_copilot(request: CopilotRequest):
             "chart_data": chart_data,
             "financial_data": financial_data,
             "display_recommendations": display_recommendations,
-            "classification": classification
+            "classification": classification,
+            "company_ids": company_ids_to_use
         }
 
     # Step 12: Process LLM response for structured output
@@ -580,6 +581,7 @@ async def ask_copilot(request: CopilotRequest):
         "financial_data": financial_data,
         "display_recommendations": display_recommendations,
         "classification": classification,
+        "company_ids": company_ids_to_use,
         "context_info": {
             "endpoint_routing": {
                 "endpoint_type": endpoint_type,
