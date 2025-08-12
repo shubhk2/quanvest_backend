@@ -21,7 +21,7 @@ def get_dividend_data(company_number: int):
     cursor.execute("""
         SELECT
             symbol, company_name, series, purpose, face_value,
-            declaration_date, ex_dividend_date, record_date,
+            ex_date, record_date,
             book_closure_start_date, book_closure_end_date
         FROM dividend
         WHERE company_no = %s
@@ -32,7 +32,7 @@ def get_dividend_data(company_number: int):
 
     headers = [
         "Symbol", "Company Name", "Series", "Purpose", "Face Value",
-        "Declaration Date", "Ex-Dividend Date", "Record Date",
+        "Declaration Date", "Record Date",
         "Book Closure Start Date", "Book Closure End Date"
     ]
 
@@ -45,8 +45,7 @@ def get_dividend_data(company_number: int):
             "Series": row["series"],
             "Purpose": row["purpose"],
             "Face Value": row["face_value"],
-            "Declaration Date": row["declaration_date"],
-            "Ex-Dividend Date": row["ex_dividend_date"],
+            "Declaration Date": row["ex_date"],
             "Record Date": row["record_date"],
             "Book Closure Start Date": row["book_closure_start_date"],
             "Book Closure End Date": row["book_closure_end_date"]

@@ -30,6 +30,8 @@ load_dotenv()
 from backend.routers import stock_data, home, financials, ratios, overview, charts, copilot
 from backend.routers import search, dividend, shareholding_pattern, sql_rag
 from backend.routers import annual_files, quarterly_files, earning_calls
+from backend.routers import insider_trading
+from backend.routers import pledged_data
 
 
 
@@ -139,6 +141,8 @@ app.include_router(shareholding_pattern.router, prefix="/shareholding_pattern", 
 app.include_router(annual_files.router, prefix="/annual_files", dependencies=[Depends(get_api_key)])
 app.include_router(quarterly_files.router, prefix="/quarterly_files", dependencies=[Depends(get_api_key)])
 app.include_router(earning_calls.router, prefix="/earning_calls", dependencies=[Depends(get_api_key)])
+app.include_router(insider_trading.router, prefix="/insider_trading", dependencies=[Depends(get_api_key)])
+app.include_router(pledged_data.router, prefix="/pledged_data", dependencies=[Depends(get_api_key)])
 
 logger.info("All routers registered")
 
