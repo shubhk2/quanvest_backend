@@ -294,7 +294,7 @@ http_sync = make_request
 # (They are already defined in ask_copilot, so move their definition up)
 overview_base_url = os.getenv("OVERVIEW_BASE_URL", "https://api.quanvest.me/overview/company")
 charts_base_url = os.getenv("CHARTS_BASE_URL", "https://api.quanvest.me/charts")
-flask_url = os.getenv("FLASK_SERVER_URL", "https://f6c4-34-53-88-141.ngrok-free.app")
+flask_url = os.getenv("FLASK_SERVER_URL", "http://localhost:5000")  # Default to local Flask server
 financials_base_url = os.getenv("FINANCIALS_BASE_URL", "https://api.quanvest.me/financials")
 ratio_base_url = os.getenv("RATIO_BASE_URL", "https://api.quanvest.me/ratios")
 shareholding_base_url = os.getenv("SHAREHOLDING_BASE_URL", "https://api.quanvest.me/shareholding_pattern")
