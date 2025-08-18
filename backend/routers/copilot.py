@@ -540,7 +540,7 @@ async def ask_copilot(request: CopilotRequest):
             context_data=context_data  # Pass context data for future template selection
         )
         gemini_call_duration = time.time() - gemini_call_start_time
-        logger.info(f"Gemini API call completed in {gemini_call_duration:.2f} seconds.")
+        logger.info(f"Gemini API call completed in {gemini_call_duration:.2f} seconds.Gemini Response:{gemini_result.get("response", "")}")
     except Exception as e:
         logger.error(f"Gemini call failed: {str(e)}")
         return {
