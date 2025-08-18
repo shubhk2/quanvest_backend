@@ -481,7 +481,12 @@ async def ask_copilot(request: CopilotRequest):
             break
 
         if task_type == 'overview':
-            company_overviews.append(all_responses[response_idx])
+            overview_data = all_responses[response_idx]
+            company_overviews.append(overview_data)
+            if overview_data and not overview_data.get('error') and 'stats' in overview_data:
+                stats_str = f"\n\nCompany Stats:\n{overview_data['stats']}"
+                if stats_str not in combined_context:
+                    combined_context += stats_str
             response_idx += 1
         elif task_type == 'shareholding':
             shareholding_data.append(all_responses[response_idx])
