@@ -631,12 +631,18 @@ def process_llm_response(
     parts = regex.split(llm_response_text)
 
     output = []
+    processed_placeholders = set()  # Keep track of processed placeholders
+
     for part in parts:
         if not part:
             continue
 
         if part in placeholder_patterns:
             placeholder = part
+            if placeholder in processed_placeholders:
+                # If this placeholder has been processed, skip it to avoid duplication
+                continue
+
             metadata = {"placeholder": placeholder, "type": "error", "data": "Error loading table/chart"}
 
             # Determine the type and check for data availability
@@ -651,28 +657,32 @@ def process_llm_response(
                 else:
                     metadata["data"] = "Chart data is not available or not recommended for display."
 
-            else: # It's a table
+            else:  # It's a table
                 table_type = "unknown"
                 data_available = False
 
                 if placeholder == '~OVERVIEW_STATS_TABLE~':
                     table_type = "company_overview"
-                    if display_recommendations.get('company_overview', False) and any(is_valid_response(d) for d in company_overviews):
+                    if display_recommendations.get('company_overview', False) and any(
+                            is_valid_response(d) for d in company_overviews):
                         data_available = True
 
                 elif placeholder == '~SHAREHOLDING_TABLE~':
                     table_type = "shareholding"
-                    if display_recommendations.get('shareholding', False) and any(is_valid_response(d) for d in shareholding_data):
+                    if display_recommendations.get('shareholding', False) and any(
+                            is_valid_response(d) for d in shareholding_data):
                         data_available = True
 
                 elif placeholder in ['~RATIOS_TABLE~', '~COMPREHENSIVE_RATIOS_TABLE~', '~COMPARISON_TABLE~']:
                     table_type = "ratios"
-                    if display_recommendations.get('table', False) and any(is_valid_response(d) for d in ratios_data.values()):
+                    if display_recommendations.get('table', False) and any(
+                            is_valid_response(d) for d in ratios_data.values()):
                         data_available = True
 
                 elif placeholder in ['~FINANCIAL_PARAMETERS_TABLE~', '~FINANCIAL_DATA_TABLE~']:
                     table_type = "financials"
-                    if display_recommendations.get('table', False) and any(is_valid_response(d) for table_data in financial_data.values() for d in table_data):
+                    if display_recommendations.get('table', False) and any(
+                            is_valid_response(d) for table_data in financial_data.values() for d in table_data):
                         data_available = True
 
                 if data_available:
@@ -686,6 +696,7 @@ def process_llm_response(
                     metadata["data"] = f"Table data for '{table_type}' is not available or not recommended for display."
 
             output.append(metadata)
+            processed_placeholders.add(placeholder)  # Mark as processed
         else:
             output.append(part.strip())
 
