@@ -483,10 +483,28 @@ async def ask_copilot(request: CopilotRequest):
         if task_type == 'overview':
             overview_data = all_responses[response_idx]
             company_overviews.append(overview_data)
-            if overview_data and not overview_data.get('error') and 'stats' in overview_data:
-                stats_str = f"\n\nCompany Stats:\n{overview_data['stats']}"
-                if stats_str not in combined_context:
-                    combined_context += stats_str
+            # --- FIX: Robust type check and logging for stats ---
+            stats_obj = overview_data.get('stats') if overview_data and not overview_data.get('error') else None
+            if stats_obj:
+                if isinstance(stats_obj, str):
+                    import json
+                    try:
+                        stats_obj = json.loads(stats_obj)
+                        logger.info("Parsed stats string to dict successfully.")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse stats string as dict: {e}")
+                        stats_obj = None
+                if isinstance(stats_obj, dict):
+                    stats_str = format_company_stats(stats_obj)
+                    if stats_str:
+                        combined_context += f"\n\nCompany Stats:\n{stats_str}"
+                        logger.info(f"Added stats for company {overview_data.get('company_number', 'unknown')}")
+                    else:
+                        logger.warning("No valid stats found in company overview data after formatting.")
+                else:
+                    logger.warning(f"Stats object is not a dict after parsing: {type(stats_obj)}")
+            else:
+                logger.warning(f"No stats found or stats is empty for company {overview_data.get('company_number', 'unknown')}")
             response_idx += 1
         elif task_type == 'shareholding':
             shareholding_data.append(all_responses[response_idx])
@@ -535,7 +553,7 @@ async def ask_copilot(request: CopilotRequest):
             shareholding_data and not any(isinstance(d, dict) and d.get('error') for d in shareholding_data)),
         "query_type": classification.get('query_type', 'comprehensive')
     }
-
+    # logger.info(f"Context data prepared for Gemini: {combined_context}")
     # Step 11: Generate LLM response
     try:
         gemini_call_start_time = time.time()
@@ -750,3 +768,26 @@ def consolidate_financial_data(results: List, task_order: List[str], classificat
         response_idx += 1
 
     return consolidated
+
+
+def format_company_stats(stats: dict) -> str:
+    """
+    Convert the stats dict (from overview endpoint) into a readable string for LLM context.
+    """
+    if not stats or not isinstance(stats, dict):
+        return ""
+    lines = []
+    for table, data in stats.items():
+        lines.append(f"**{table.replace('_', ' ').title()}**")
+        columns = data.get("columns", [])
+        values = data.get("values", [])
+        if columns and values:
+            # Render as a simple text table
+            col_line = " | ".join(columns)
+            lines.append(col_line)
+            lines.append("-" * len(col_line))
+            for row in values:
+                row_line = " | ".join(str(x) if x is not None else "" for x in row)
+                lines.append(row_line)
+        lines.append("")  # Blank line between tables
+    return "\n".join(lines)

@@ -32,6 +32,8 @@ from backend.routers import search, dividend, shareholding_pattern, sql_rag
 from backend.routers import annual_files, quarterly_files, earning_calls
 from backend.routers import insider_trading
 from backend.routers import pledged_data
+from backend.routers import cg_board_composition, cg_committee_composition, cg_board_meetings
+from backend.routers import rpt, cg_committee_meetings
 
 
 
@@ -143,6 +145,13 @@ app.include_router(quarterly_files.router, prefix="/quarterly_files", dependenci
 app.include_router(earning_calls.router, prefix="/earning_calls", dependencies=[Depends(get_api_key)])
 app.include_router(insider_trading.router, prefix="/insider_trading", dependencies=[Depends(get_api_key)])
 app.include_router(pledged_data.router, prefix="/pledged_data", dependencies=[Depends(get_api_key)])
+# New Corporate Governance routers
+app.include_router(cg_board_composition.router, prefix="/cg_board_composition", dependencies=[Depends(get_api_key)])
+app.include_router(cg_committee_composition.router, prefix="/cg_committee_composition", dependencies=[Depends(get_api_key)])
+app.include_router(cg_board_meetings.router, prefix="/cg_board_meetings", dependencies=[Depends(get_api_key)])
+# New RPT and CG Committee Meetings routers
+app.include_router(rpt.router, prefix="/rpt", dependencies=[Depends(get_api_key)])
+app.include_router(cg_committee_meetings.router, prefix="/cg_committee_meetings", dependencies=[Depends(get_api_key)])
 
 logger.info("All routers registered")
 

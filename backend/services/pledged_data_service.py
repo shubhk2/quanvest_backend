@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from psycopg2.extras import RealDictCursor
 from backend.db_setup import connect_to_db
 
@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 def get_pledged_data(company_number: int) -> Dict[str, Any]:
     """
-    Returns pledged/insider trading data for a given company_number.
+    Returns pledged data for a given company_number, excluding 'id' and 'company_no'.
     """
     conn = connect_to_db()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -22,27 +22,43 @@ def get_pledged_data(company_number: int) -> Dict[str, Any]:
             return {"error": f"No company found for {company_number}"}
         company_name = company["full_name"]
 
-        # Get pledged data for this company name
-        cursor.execute("""
-            SELECT * FROM public.pledged_data WHERE company_name = %s LIMIT 1
+        # Select all columns except id and company_no
+        headers = [
+            "company_name",
+            "total_issued_shares",
+            "promoter_shares",
+            "percent_promoter",
+            "total_public_holding",
+            "shares_encumbered",
+            "percent_promoter_encumbered",
+            "percent_total_encumbered",
+            "value_encumbered",
+            "disclosure",
+            "shares_pledged",
+            "total_demat_shares",
+            "pledge_demat_percentage",
+            "value_pledged"
+        ]
+
+        cursor.execute(f"""
+            SELECT {', '.join(headers)}
+            FROM public.pledged_data
+            WHERE company_name = %s
         """, (company_name,))
-        row = cursor.fetchone()
-        if not row:
-            logger.warning(f"No pledged data found for company_name={company_name}")
-            return {"error": f"No pledged data found for  {company_name}"}
-        return row
+        rows = cursor.fetchall()
+
+        formatted_data: List[Dict[str, Any]] = []
+        for row in rows:
+            formatted_data.append({key: row.get(key) for key in headers})
+
+        return {
+            "company_name": company_name,
+            "headers": headers,
+            "data": formatted_data,
+        }
     except Exception as e:
-        logger.error(f"Error in get_insider_trading_data: {e}", exc_info=True)
+        logger.error(f"Error in get_pledged_data: {e}", exc_info=True)
         return {"error": str(e)}
     finally:
         cursor.close()
         conn.close()
-
-if __name__ == "__main__":
-    try:
-        company_number = 90  # Replace with a valid company number
-        data = get_pledged_data(company_number)
-        print(f"Insider Trading Data for company number {company_number}: {data}")
-    except Exception as e:
-        print(f"Error: {e}")
-
