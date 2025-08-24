@@ -1,7 +1,6 @@
-# Copilot Service - Updated for Hybrid RAG Integration
 import os
 import logging
-import time  # Import time module
+import time
 import re
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -27,14 +26,57 @@ class CopilotRequest(BaseModel):
 # Get API key for internal requests
 API_KEY = os.environ.get("API_ACCESS_KEY", "YOUR_GENERATED_API_KEY_HERE")
 
+# ===== NEW: DISPLAY-ONLY TABLES (No Gemini API calls) =====
+DISPLAY_ONLY_TABLES = {
+    'cg_board_composition',
+    'cg_committee_composition',
+    'cg_board_meetings',
+    'cg_committee_meetings',
+    'insider_trading',
+    'rpt',
+    'pledged_data'
+}
+
+# ===== ENDPOINT CONFIGURATIONS =====
+# Base URLs for all endpoints
+overview_base_url = os.getenv("OVERVIEW_BASE_URL", "https://api.quanvest.me/overview/company")
+charts_base_url = os.getenv("CHARTS_BASE_URL", "https://api.quanvest.me/charts")
+stock_charts_base_url = os.getenv("STOCK_CHARTS_BASE_URL", "https://api.quanvest.me/stock_data")
+flask_url = os.getenv("FLASK_SERVER_URL", "http://localhost:5000")
+financials_base_url = os.getenv("FINANCIALS_BASE_URL", "https://api.quanvest.me/financials")
+ratio_base_url = os.getenv("RATIO_BASE_URL", "https://api.quanvest.me/ratios")
+shareholding_base_url = os.getenv("SHAREHOLDING_BASE_URL", "https://api.quanvest.me/shareholding_pattern")
+dividend_base_url = os.getenv("DIVIDEND_BASE_URL", "https://api.quanvest.me/dividend")
+insider_trading_base_url = os.getenv("INSIDER_TRADING_BASE_URL", "https://api.quanvest.me/insider_trading")
+rpt_base_url = os.getenv("RPT_BASE_URL", "https://api.quanvest.me/rpt")
+pledged_data_base_url = os.getenv("PLEDGED_DATA_BASE_URL", "https://api.quanvest.me/pledged_data")
+
+# Corporate Governance endpoints
+cg_board_composition_base_url = os.getenv("CG_BOARD_COMPOSITION_BASE_URL",
+                                          "https://api.quanvest.me/cg_board_composition")
+cg_committee_composition_base_url = os.getenv("CG_COMMITTEE_COMPOSITION_BASE_URL",
+                                              "https://api.quanvest.me/cg_committee_composition")
+cg_board_meetings_base_url = os.getenv("CG_BOARD_MEETINGS_BASE_URL", "https://api.quanvest.me/cg_board_meetings")
+cg_committee_meetings_base_url = os.getenv("CG_COMMITTEE_MEETINGS_BASE_URL",
+                                           "https://api.quanvest.me/cg_committee_meetings")
+
+standard_headers = {
+    'Content-Type': 'application/json',
+    'X-API-Key': API_KEY
+}
+
+ngrok_headers = {
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true',
+    'X-API-Key': API_KEY
+}
+
 
 async def make_request_async(url: str, method: str = "POST", json_data: dict = None, headers: dict = None,
-                             timeout: int = 20) -> Dict[
-    str, Any]:
+                             timeout: int = 20) -> Dict[str, Any]:
     """Async HTTP request to prevent thread pool starvation"""
     try:
         timeout = aiohttp.ClientTimeout(total=20)
-        # Always add X-API-Key header
         headers = headers or {}
         headers['X-API-Key'] = API_KEY
 
@@ -52,9 +94,8 @@ async def make_request_async(url: str, method: str = "POST", json_data: dict = N
 
 
 def make_request(url: str, method: str = "GET", json_data: dict = None, headers: dict = None) -> Dict[str, Any]:
-    """Synchronous HTTP request - your original function"""
+    """Synchronous HTTP request"""
     try:
-        # Always add X-API-Key header
         headers = headers or {}
         headers['X-API-Key'] = API_KEY
 
@@ -62,6 +103,7 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
             response = requests.get(url, headers=headers, timeout=30)
         else:
             response = requests.post(url, json=json_data, headers=headers, timeout=30)
+
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -69,7 +111,7 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
 
 
 def is_valid_response(response):
-    'only for context for finding the correct template'
+    """Check if response is valid (not an error)"""
     return not (isinstance(response, dict) and response.get('error'))
 
 
@@ -90,7 +132,7 @@ def get_company_numbers_from_db(resolved_companies: List[Dict[str, Any]]) -> Lis
             ticker = company.get('ticker', '')
             full_name = company.get('full_name', '').lower()
 
-            # Strategy 1: Try exact ticker match first
+            # Try exact ticker match first
             cursor.execute(
                 "SELECT id FROM company_detail WHERE UPPER(ticker) = UPPER(%s)",
                 (ticker,)
@@ -100,7 +142,7 @@ def get_company_numbers_from_db(resolved_companies: List[Dict[str, Any]]) -> Lis
                 company_numbers.append(result[0])
                 continue
 
-            # Strategy 2: Try fuzzy full_name matching
+            # Try fuzzy full_name matching
             cursor.execute(
                 "SELECT id FROM company_detail WHERE lower(company_detail.full_name) ILIKE %s LIMIT 1",
                 (f"%{full_name}%",)
@@ -120,63 +162,72 @@ def get_company_numbers_from_db(resolved_companies: List[Dict[str, Any]]) -> Lis
     return company_numbers
 
 
-# def build_financials_url(base_url: str, endpoint_mode: str, company_id: int,
-#                          statement_type: str, parameters: List[str] = None) -> str:
-#     """Build appropriate financials URL based on endpoint mode"""
-#     if endpoint_mode == "parameters" and parameters:
-#         # The POST endpoint requires company_number and statement_type as query params
-#         return f"{base_url}/parameters?company_number={company_id}&statement_type={statement_type}"
-#     else:
-#         return f"{base_url}?company_number={company_id}&statement_type={statement_type}&start_year=2021&end_year=2023"
-
-
-# def build_ratios_url(base_url: str, endpoint_mode: str) -> str:
-#     """Build appropriate ratios URL based on endpoint mode"""
-#     if endpoint_mode == "parameters":
-#         return f"{base_url}/parameters"
-#     else:
-#         return base_url
-
-#
-# def prepare_financials_payload(endpoint_mode: str, company_id: int, statement_type: str,
-#                                parameters: List[str] = None) -> Dict[str, Any]:
-#     """Prepare payload for financials request"""
-#     if endpoint_mode == "parameters" and parameters:
-#         # The payload only contains what's in the Pydantic model (body)
-#         return {
-#             "parameters": parameters,
-#             "start_year": 2021,
-#             "end_year": 2025
-#         }
-#     return None  # GET request, no payload needed
-
-
-# def prepare_ratios_payload(endpoint_mode: str, company_ids: List[int],
-#                            parameters: List[str] = None) -> Dict[str, Any]:
-#     """Prepare payload for ratios request"""
-#     if endpoint_mode == "parameters" and parameters:
-#         return {
-#             "company_numbers": company_ids,
-#             "parameters": parameters,
-#             "start_year": 2021,
-#             "end_year": 2025
-#         }
-#     return None
-
-
 def prepare_chart_request(chart_endpoint_type: str, company_ids: List[int],
-                          parameters: List[str]) -> Dict[str, Any]:
-    """Prepare chart request based on endpoint type"""
-    return {
+                          parameters: List[str], query_type: str = None) -> Dict[str, Any]:
+    """Prepare chart request based on endpoint type and query type"""
+
+    # Default chart request for financial/ratio charts
+    chart_request = {
         "company_numbers": company_ids,
-        "parameters": parameters[:5],  # Limit to 5 parameters for chart clarity
+        "parameters": parameters[:5],  # Limit to 5 parameters for clarity
         "start_year": 2021,
         "end_year": 2025,
         "chart_type": "line"
     }
 
+    # Special handling for stock charts
+    if query_type == "stock_analysis":
+        # Determine data_type based on parameters or default to price
+        data_type = "price"  # Default
+
+        if any('dma50' in param.lower() for param in parameters):
+            data_type = "dma50"
+        elif any('dma200' in param.lower() for param in parameters):
+            data_type = "dma200"
+        elif any('volume' in param.lower() for param in parameters):
+            data_type = "price"  # For volume queries, use price data type
+
+        # Stock chart request format
+        stock_chart_request = {
+            "data_type": data_type,
+            "period": "10yr",  # Default period
+            "company_number": company_ids[0] if company_ids else None  # Stock charts are per company
+        }
+        return stock_chart_request
+
+    return chart_request
+
+
+def get_endpoint_url_and_method(endpoint_type: str, endpoint_mode: str, table_name: str = None) -> Tuple[str, str]:
+    """Get appropriate URL and HTTP method for endpoint"""
+
+    endpoint_mapping = {
+        'financials': (financials_base_url, 'GET'),
+        'ratios': (ratio_base_url, 'GET'),
+        'shareholding_pattern': (shareholding_base_url, 'GET'),
+        'dividend': (dividend_base_url, 'GET'),
+        'insider_trading': (insider_trading_base_url, 'GET'),
+        'rpt': (rpt_base_url, 'GET'),
+        'pledged_data': (pledged_data_base_url, 'GET'),
+        'cg_board_composition': (cg_board_composition_base_url, 'GET'),
+        'cg_committee_composition': (cg_committee_composition_base_url, 'GET'),
+        'cg_board_meetings': (cg_board_meetings_base_url, 'GET'),
+        'cg_committee_meetings': (cg_committee_meetings_base_url, 'GET'),
+        'stock_data': (stock_charts_base_url, 'GET')
+    }
+
+    base_url, default_method = endpoint_mapping.get(endpoint_type, (financials_base_url, 'GET'))
+
+    # Handle parameter mode for specific endpoints
+    if endpoint_mode == 'parameters':
+        if endpoint_type in ['financials', 'ratios']:
+            return f"{base_url}/parameters", 'POST'
+
+    return base_url, default_method
+
 
 def build_endpoint_tasks(classification: Dict, company_ids_to_use: List[int]) -> List[Tuple[str, callable]]:
+    """Build endpoint tasks based on classification"""
     tasks = []
     required_endpoints = classification.get('required_endpoints', [])
 
@@ -184,137 +235,91 @@ def build_endpoint_tasks(classification: Dict, company_ids_to_use: List[int]) ->
         endpoint_type = endpoint_config['type']
         endpoint_mode = endpoint_config['mode']
         parameters = endpoint_config.get('parameters', [])
+        table = endpoint_config.get('table', '')
+
+        # Get endpoint URL and method
+        url, method = get_endpoint_url_and_method(endpoint_type, endpoint_mode, table)
 
         if endpoint_type == 'financials':
-            table = endpoint_config['table']
             for company_id in company_ids_to_use:
                 if endpoint_mode == 'parameters' and parameters:
-                    # Correct parameter separation
                     query_params = f"?company_number={company_id}&statement_type={table}"
                     body_payload = {
                         "parameters": parameters,
                         "start_year": 2021,
                         "end_year": 2025
                     }
-                    task = lambda p=body_payload, q=query_params: http_sync(
-                        f"{financials_base_url}/parameters{q}",  # Query params in URL
-                        "POST",
-                        p,  # Parameters in BODY
-                        standard_headers
-                    )
+                    task = lambda p=body_payload, q=query_params: make_request(
+                        f"{url}{q}", "POST", p, standard_headers)
                     tasks.append((f'financials_{table}_{company_id}', task))
                 else:
-                    # Use base financials endpoint
-                    url = f"{financials_base_url}?company_number={company_id}&statement_type={table}&start_year=2021&end_year=2025"
-                    task = lambda u=url: http_sync(u, "GET", headers=standard_headers)
+                    full_url = f"{url}?company_number={company_id}&statement_type={table}&start_year=2021&end_year=2025"
+                    task = lambda u=full_url: make_request(u, "GET", headers=standard_headers)
                     tasks.append((f'financials_{table}_{company_id}', task))
 
         elif endpoint_type == 'ratios':
             if endpoint_mode == 'parameters' and parameters:
-                # Use filtered ratios endpoint
                 payload = {
                     "company_numbers": company_ids_to_use,
                     "parameters": parameters,
                     "start_year": 2021,
                     "end_year": 2025
                 }
-                task = lambda p=payload: http_sync(
-                    f"{ratio_base_url}/parameters",
-                    "POST",
-                    p,
-                    standard_headers
-                )
+                task = lambda p=payload: make_request(f"{url}", "POST", p, standard_headers)
                 tasks.append(('ratios_filtered', task))
             else:
-                # Use base ratios endpoint
                 for company_id in company_ids_to_use:
-                    url = f"{ratio_base_url}?company_number={company_id}&start_year=2021&end_year=2025"
-                    task = lambda u=url: http_sync(u, "GET", headers=standard_headers)
+                    full_url = f"{url}?company_number={company_id}&start_year=2021&end_year=2025"
+                    task = lambda u=full_url: make_request(u, "GET", headers=standard_headers)
                     tasks.append((f'ratios_{company_id}', task))
 
-        elif endpoint_type == 'shareholding':
+        else:
+            # Handle all other domain-specific endpoints
             for company_id in company_ids_to_use:
-                url = f"{shareholding_base_url}?company_number={company_id}"
-                task = lambda u=url: http_sync(u, "GET", headers=standard_headers)
-                tasks.append((f'shareholding_{company_id}', task))
+                full_url = f"{url}?company_number={company_id}"
+                task = lambda u=full_url: make_request(u, "GET", headers=standard_headers)
+                tasks.append((f'{endpoint_type}_{company_id}', task))
 
     return tasks
 
 
-def filter_data_fetching_by_intent(classification: Dict, user_query: str) -> Dict:
-    """Priority waala
-    Filter data fetching based on query intent to avoid unnecessary API calls
-    """
-    try:
-        from backend.tools.query_intent_analyzer import analyze_query_intent_and_priority
+def should_skip_gemini_call(classification: Dict) -> bool:
+    """Determine if we should skip Gemini API call for display-only queries"""
+    required_tables = classification.get('required_sql_tables', [])
 
-        # Analyze intent and get priority filtering
-        intent_match, priority_filtering = analyze_query_intent_and_priority(user_query, classification)
+    # If ALL required tables are display-only, skip Gemini
+    if required_tables and all(table in DISPLAY_ONLY_TABLES for table in required_tables):
+        return True
 
-        # Update display recommendations based on intent
-        filtered_display = {}
-
-        # Start with original recommendations
-        original_display = classification.get('display_components', {})
-
-        # Apply intent-based filtering
-        primary_components = priority_filtering['primary']['components']
-        skip_components = priority_filtering['skip']['components']
-
-        for component, should_display in original_display.items():
-            if component in skip_components:
-                filtered_display[component] = False
-                logger.info(f"Skipping {component} due to intent priority")
-            elif component in primary_components:
-                filtered_display[component] = True
-                logger.info(f"Prioritizing {component} for intent {intent_match.intent_type}")
-            else:
-                filtered_display[component] = should_display
-
-        # Update classification with filtered components
-        classification['display_components'] = filtered_display
-        classification['intent_analysis'] = {
-            'detected_intent': intent_match.intent_type,
-            'confidence': intent_match.confidence,
-            'priority_filtering': priority_filtering
-        }
-
-        logger.info(f"Intent-based filtering applied: {filtered_display}")
-        return classification
-
-    except Exception as e:
-        logger.error(f"Intent-based filtering failed: {str(e)}, using original classification")
-        return classification
+    return False
 
 
-# Alias for make_request to match http_sync usage in new code
+def generate_display_only_response(classification: Dict, resolved_companies: List[Dict]) -> str:
+    """Generate simple text response for display-only tables"""
+    query_type = classification.get('query_type', '')
+    company_names = [comp.get('full_name', comp.get('ticker', 'Company')) for comp in resolved_companies]
+    company_text = ', '.join(company_names)
+
+    response_templates = {
+        'pledged_data_analysis': f"Here is the latest pledged data for {company_text}:",
+        'insider_trading_analysis': f"Here are the insider trading details for {company_text}:",
+        'rpt_analysis': f"Here are the related party transactions for {company_text}:",
+        'corporate_governance': f"Here is the corporate governance information for {company_text}:",
+        'dividend_analysis': f"Here is the dividend information for {company_text}:",
+    }
+
+    return response_templates.get(query_type, f"Here is the requested information for {company_text}:")
+
+
+# Alias for consistency
 http_sync = make_request
-
-# Ensure these variables are available at module level for build_endpoint_tasks
-# (They are already defined in ask_copilot, so move their definition up)
-overview_base_url = os.getenv("OVERVIEW_BASE_URL", "https://api.quanvest.me/overview/company")
-charts_base_url = os.getenv("CHARTS_BASE_URL", "https://api.quanvest.me/charts")
-flask_url = os.getenv("FLASK_SERVER_URL", "http://localhost:5000")  # Default to local Flask server
-financials_base_url = os.getenv("FINANCIALS_BASE_URL", "https://api.quanvest.me/financials")
-ratio_base_url = os.getenv("RATIO_BASE_URL", "https://api.quanvest.me/ratios")
-shareholding_base_url = os.getenv("SHAREHOLDING_BASE_URL", "https://api.quanvest.me/shareholding_pattern")
-
-standard_headers = {
-    'Content-Type': 'application/json',
-    'X-API-Key': API_KEY
-}
-ngrok_headers = {
-    'Content-Type': 'application/json',
-    'ngrok-skip-browser-warning': 'true',
-    'X-API-Key': API_KEY
-}
 
 
 @router.post("/ask")
 async def ask_copilot(request: CopilotRequest):
-    """Enhanced copilot with multi-endpoint support"""
+    """Enhanced copilot with comprehensive endpoint support"""
     request_start_time = time.time()
-    logger.info("Copilot /ask endpoint called.")
+    logger.info("Copilot /ask endpoint called with final integration.")
 
     # Step 1: Get enhanced context from Flask
     enhanced_context_data = {}
@@ -324,13 +329,15 @@ async def ask_copilot(request: CopilotRequest):
     try:
         logger.info("Calling Flask /enhanced_retrieve for hybrid context")
         colab_call_start_time = time.time()
+
         enhanced_response = await make_request_async(
             f"{flask_url}/enhanced_retrieve",
             "POST",
             {"query": request.user_query},
-            ngrok_headers,  # ← async version
+            ngrok_headers,
             timeout=25
         )
+
         colab_call_duration = time.time() - colab_call_start_time
         logger.info(f"Flask /enhanced_retrieve call completed in {colab_call_duration:.2f} seconds.")
 
@@ -339,14 +346,14 @@ async def ask_copilot(request: CopilotRequest):
         classification = enhanced_response.get('classification', {})
         display_recommendations = classification.get('display_components', {})
 
-        logger.info(f"Classification: {classification} ")
+        logger.info(f"Classification: {classification.get('query_type', 'unknown')}")
         logger.info(f"Display recommendations: {display_recommendations}")
 
     except Exception as e:
         logger.error(f"Enhanced retrieve failed: {str(e)}")
         enhanced_context_data = {"error": str(e)}
 
-        # Fix: Don't use empty context, create minimal context from classification
+        # Create fallback context
         if "timeout" in str(e).lower():
             combined_context = f"Query classified as: {request.user_query}\nDataSource: hybrid analysis requested\nNote: Some context retrieval timed out but continuing with available data."
         else:
@@ -356,30 +363,25 @@ async def ask_copilot(request: CopilotRequest):
             "llm_response": True,
             "table": False,
             "chart": False,
-            "company_overview": False,
-            "shareholding": False
+            "company_overview": False
         }
+
         classification = {
             "required_sql_tables": [],
-            "endpoint_type": "financials",
+            "query_type": "company_overview",
+            "endpoint_type": "overview",
             "endpoint_mode": "base"
         }
 
-        try:
-            classification = filter_data_fetching_by_intent(classification, request.user_query)
-            display_recommendations = classification.get('display_components', {})
-            logger.info(f"Updated display recommendations after intent filtering: {display_recommendations}")
-        except Exception as e:
-            logger.error(f"Intent filtering failed: {str(e)}")
-
-    
     # Step 2: Extract classification details
-    endpoint_type = classification.get('endpoint_type', 'financials')
+    query_type = classification.get('query_type', 'company_overview')
+    endpoint_type = classification.get('endpoint_type', 'overview')
     endpoint_mode = classification.get('endpoint_mode', 'base')
     chart_endpoint_type = classification.get('chart_endpoint_type', 'parameters')
     chart_parameters = classification.get('chart_parameters', [])
     identified_parameters = classification.get('identified_parameters', {})
     required_sql_tables = classification.get('required_sql_tables', [])
+    is_comparison = classification.get('is_comparison_query', False)
 
     # Step 3: Determine company IDs
     company_ids_to_use = []
@@ -388,11 +390,9 @@ async def ask_copilot(request: CopilotRequest):
         company_ids_to_use = get_company_numbers_from_db(resolved_companies)
         logger.info(f"Extracted company IDs: {company_ids_to_use}")
 
-    # Step 4: Check if shareholding data is needed based on classification
-    fetch_shareholding = 'shareholder' in required_sql_tables
-    if fetch_shareholding:
-        display_recommendations['shareholding'] = True
-        logger.info("Shareholding data fetch enabled based on query classification")
+    # Step 4: Check if this is a display-only query
+    skip_gemini = should_skip_gemini_call(classification)
+    logger.info(f"Skip Gemini API call: {skip_gemini}")
 
     # Step 5: Build all required endpoint tasks
     all_tasks_lambdas = []
@@ -406,46 +406,51 @@ async def ask_copilot(request: CopilotRequest):
                 all_tasks_lambdas.append(
                     lambda url=current_overview_url: http_sync(url, "GET", headers=standard_headers)
                 )
-                task_order.append('overview')
+        task_order.append('overview')
         logger.info(f"Added {len(company_ids_to_use)} overview tasks")
 
-    # Shareholding Pattern tasks (conditional) - Using classification data
-    if fetch_shareholding and company_ids_to_use:
-        for company_id in company_ids_to_use:
-            if isinstance(company_id, int) and company_id > 0:
-                shareholding_url = f"{shareholding_base_url}?company_number={company_id}"
-                all_tasks_lambdas.append(
-                    lambda url=shareholding_url: make_request(url, "GET", headers=standard_headers)
-                )
-                task_order.append('shareholding')
-        logger.info(f"Added {len(company_ids_to_use)} shareholding pattern tasks")
-
     # Chart tasks (conditional with intelligent endpoint selection)
+    chart_data = {}
     if display_recommendations.get('chart', False) and company_ids_to_use and chart_parameters:
-        chart_url = f"{charts_base_url}/{chart_endpoint_type}"
-        chart_payload = prepare_chart_request(chart_endpoint_type, company_ids_to_use, chart_parameters)
+        # Determine chart URL based on query type
+        if query_type == "stock_analysis":
+            # Use stock charts endpoint
+            chart_request = prepare_chart_request(chart_endpoint_type, company_ids_to_use,
+                                                  chart_parameters, query_type)
+            chart_url = f"{stock_charts_base_url}/{chart_request['data_type']}/{chart_request['period']}/chart"
+            # Add company_number as query parameter
+            chart_url += f"?company_number={chart_request['company_number']}"
+            all_tasks_lambdas.append(
+                lambda: http_sync(chart_url, "GET", headers=standard_headers)
+            )
+        else:
+            # Use regular financial/ratio charts
+            if query_type in ['ratio_analysis', 'comprehensive'] or 'ratio' in chart_endpoint_type:
+                chart_url = f"{charts_base_url}/ratios"
+            else:
+                chart_url = f"{charts_base_url}/parameters"
 
-        all_tasks_lambdas.append(
-            lambda: http_sync(chart_url, "POST", chart_payload, standard_headers)
-        )
+            chart_payload = prepare_chart_request(chart_endpoint_type, company_ids_to_use, chart_parameters)
+            all_tasks_lambdas.append(
+                lambda: http_sync(chart_url, "POST", chart_payload, standard_headers)
+            )
+
         task_order.append('chart')
-        logger.info(f"Added chart task for {chart_endpoint_type}")
+        logger.info(f"Added chart task for {query_type}")
     else:
         all_tasks_lambdas.append(lambda: {})
         task_order.append('chart')
 
-    # Multi-endpoint financial data tasks
+    # Multi-endpoint data tasks
     if display_recommendations.get('table', False) and company_ids_to_use:
         endpoint_tasks = build_endpoint_tasks(classification, company_ids_to_use)
-
         for task_name, task_func in endpoint_tasks:
             all_tasks_lambdas.append(task_func)
-            task_order.append(f'financial_{task_name}')
-
-        logger.info(f"Added {len(endpoint_tasks)} financial endpoint tasks")
+            task_order.append(f'data_{task_name}')
+        logger.info(f"Added {len(endpoint_tasks)} data endpoint tasks")
     else:
         all_tasks_lambdas.append(lambda: {})
-        task_order.append('financial')
+        task_order.append('data')
 
     # Step 6: Execute parallel tasks
     loop = asyncio.get_event_loop()
@@ -455,6 +460,7 @@ async def ask_copilot(request: CopilotRequest):
         with ThreadPoolExecutor(max_workers=len(all_tasks_lambdas)) as executor:
             futures = [loop.run_in_executor(executor, task_lambda) for task_lambda in all_tasks_lambdas]
             results = await asyncio.gather(*futures, return_exceptions=True)
+
         parallel_fetch_duration = time.time() - parallel_fetch_start_time
         logger.info(
             f"Parallel data fetch completed in {parallel_fetch_duration:.2f} seconds for {len(all_tasks_lambdas)} tasks.")
@@ -470,11 +476,19 @@ async def ask_copilot(request: CopilotRequest):
 
     # Step 8: Segment response data based on task order
     company_overviews = []
-    shareholding_data = []
     chart_data = {}
-    financial_data = []
+    consolidated_data = {
+        'financial_statements': {},
+        'ratios': {},
+        'shareholding': [],
+        'dividend': [],
+        'insider_trading': [],
+        'rpt': [],
+        'pledged_data': [],
+        'corporate_governance': []
+    }
 
-    # Segment responses based on task_order
+    # Process responses based on task_order
     response_idx = 0
     for task_type in task_order:
         if response_idx >= len(all_responses):
@@ -483,44 +497,42 @@ async def ask_copilot(request: CopilotRequest):
         if task_type == 'overview':
             overview_data = all_responses[response_idx]
             company_overviews.append(overview_data)
-            # --- FIX: Robust type check and logging for stats ---
-            stats_obj = overview_data.get('stats') if overview_data and not overview_data.get('error') else None
-            if stats_obj:
-                if isinstance(stats_obj, str):
-                    import json
-                    try:
-                        stats_obj = json.loads(stats_obj)
-                        logger.info("Parsed stats string to dict successfully.")
-                    except Exception as e:
-                        logger.warning(f"Failed to parse stats string as dict: {e}")
-                        stats_obj = None
-                if isinstance(stats_obj, dict):
+
+            # Add stats to context if available
+            if overview_data and not overview_data.get('error'):
+                stats_obj = overview_data.get('stats')
+                if stats_obj and isinstance(stats_obj, dict):
                     stats_str = format_company_stats(stats_obj)
                     if stats_str:
                         combined_context += f"\n\nCompany Stats:\n{stats_str}"
-                        logger.info(f"Added stats for company {overview_data.get('company_number', 'unknown')}")
-                    else:
-                        logger.warning("No valid stats found in company overview data after formatting.")
-                else:
-                    logger.warning(f"Stats object is not a dict after parsing: {type(stats_obj)}")
-            else:
-                logger.warning(f"No stats found or stats is empty for company {overview_data.get('company_number', 'unknown')}")
             response_idx += 1
-        elif task_type == 'shareholding':
-            shareholding_data.append(all_responses[response_idx])
-            response_idx += 1
+
         elif task_type == 'chart':
             chart_data = all_responses[response_idx]
             response_idx += 1
-        elif task_type == 'financial':
-            financial_data.append(all_responses[response_idx])
-            response_idx += 1
-    consolidated_financials = consolidate_financial_data(all_responses, task_order, classification)
 
-    # Then replace your existing financial_data with:
-    financial_data = consolidated_financials['financial_statements']
-    ratios_data = consolidated_financials['ratios']
-    shareholding_data = consolidated_financials['shareholding']  # Replaces your existing shareholding_data
+        elif task_type.startswith('data_'):
+            # Process data endpoint results
+            data_result = all_responses[response_idx]
+            task_parts = task_type.split('_')
+
+            if len(task_parts) >= 2:
+                data_type = task_parts[1]  # financials, ratios, etc.
+
+                if data_type == 'financials':
+                    table_name = task_parts[2] if len(task_parts) > 2 else 'unknown'
+                    if table_name not in consolidated_data['financial_statements']:
+                        consolidated_data['financial_statements'][table_name] = []
+                    consolidated_data['financial_statements'][table_name].append(data_result)
+
+                elif data_type == 'ratios':
+                    company_id = task_parts[2] if len(task_parts) > 2 else 'filtered'
+                    consolidated_data['ratios'][company_id] = data_result
+
+                elif data_type in consolidated_data:
+                    consolidated_data[data_type].append(data_result)
+
+            response_idx += 1
 
     # Step 9: Return raw data if requested
     if request.raw_only:
@@ -528,84 +540,85 @@ async def ask_copilot(request: CopilotRequest):
             "llm_response": None,
             "enhanced_context_data": enhanced_context_data,
             "company_overviews": company_overviews,
-            "shareholding_data": shareholding_data,
-            "ratios_data": ratios_data,
             "chart_data": chart_data,
-            "financial_data": financial_data,
+            "consolidated_data": consolidated_data,
             "display_recommendations": display_recommendations,
             "classification": classification
         }
 
-    # Step 10: Prepare data context for Gemini (future custom templates)
-    context_data = {
-        "endpoint_type": endpoint_type,
-        "endpoint_mode": endpoint_mode,
-        "identified_parameters": identified_parameters,
-        "required_sql_tables": required_sql_tables,
-        "company_count": len(company_ids_to_use) if company_ids_to_use else 0,
-        "has_charts": bool(chart_data and not chart_data.get('error')),
-        "has_ratios": bool(ratios_data) and any(is_valid_response(d) for d in ratios_data.values()),
-        "has_financials": bool(financial_data) and any(
-            is_valid_response(d)
-            for table_data in financial_data.values()
-            for d in table_data),
-        "has_shareholding": bool(
-            shareholding_data and not any(isinstance(d, dict) and d.get('error') for d in shareholding_data)),
-        "query_type": classification.get('query_type', 'comprehensive')
-    }
-    # logger.info(f"Context data prepared for Gemini: {combined_context}")
-    # Step 11: Generate LLM response
-    try:
-        gemini_call_start_time = time.time()
-        gemini_result = await get_copilot_response(
-            user_query=request.user_query,
-            refined_context=combined_context,
-            context_data=context_data  # Pass context data for future template selection
-        )
-        gemini_call_duration = time.time() - gemini_call_start_time
-        logger.info(f"Gemini API call completed in {gemini_call_duration:.2f} seconds.Gemini Response:{gemini_result.get("response", "")}")
-    except Exception as e:
-        logger.error(f"Gemini call failed: {str(e)}")
-        return {
-            "error": f"Gemini call failed: {str(e)}",
-            "enhanced_context_data": enhanced_context_data,
-            "company_overviews": company_overviews,
-            "shareholding_data": shareholding_data,
-            "ratios_data": ratios_data,
-            "chart_data": chart_data,
-            "financial_data": financial_data,
-            "display_recommendations": display_recommendations,
-            "classification": classification,
-            "company_ids": company_ids_to_use
+    # Step 10: Generate LLM response or display-only response
+    if skip_gemini:
+        # Generate simple display-only response
+        llm_response_text = generate_display_only_response(classification, resolved_companies)
+        processed_llm_response = [llm_response_text]
+        logger.info("Generated display-only response (no Gemini API call)")
+    else:
+        # Prepare context data for Gemini
+        context_data = {
+            "query_type": query_type,
+            "endpoint_type": endpoint_type,
+            "endpoint_mode": endpoint_mode,
+            "identified_parameters": identified_parameters,
+            "required_sql_tables": required_sql_tables,
+            "company_count": len(company_ids_to_use) if company_ids_to_use else 0,
+            "has_charts": bool(chart_data and not chart_data.get('error')),
+            "has_ratios": bool(consolidated_data['ratios']) and any(
+                is_valid_response(d) for d in consolidated_data['ratios'].values()),
+            "has_financials": bool(consolidated_data['financial_statements']) and any(
+                is_valid_response(d) for table_data in consolidated_data['financial_statements'].values()
+                for d in table_data),
+            "has_shareholding": bool(consolidated_data['shareholding']) and any(
+                is_valid_response(d) for d in consolidated_data['shareholding']),
+            "has_dividend": bool(consolidated_data['dividend']) and any(
+                is_valid_response(d) for d in consolidated_data['dividend']),
+            "has_corporate_governance": bool(consolidated_data['corporate_governance']) and any(
+                is_valid_response(d) for d in consolidated_data['corporate_governance']),
+            "is_comparison": is_comparison
         }
 
-    # Step 12: Process LLM response for structured output
-    processed_llm_response = process_llm_response(
-        llm_response_text=gemini_result.get("response", ""),
-        display_recommendations=display_recommendations,
-        classification=classification,
-        company_overviews=company_overviews,
-        shareholding_data=shareholding_data,
-        ratios_data=ratios_data,
-        chart_data=chart_data,
-        financial_data=financial_data
-    )
+        # Generate LLM response
+        try:
+            gemini_call_start_time = time.time()
+            gemini_result = await get_copilot_response(
+                user_query=request.user_query,
+                refined_context=combined_context,
+                context_data=context_data
+            )
+            gemini_call_duration = time.time() - gemini_call_start_time
+            logger.info(f"Gemini API call completed in {gemini_call_duration:.2f} seconds.")
 
-    # Step 13: Return comprehensive response
+            # Process LLM response for structured output
+            processed_llm_response = process_llm_response(
+                llm_response_text=gemini_result.get("response", ""),
+                display_recommendations=display_recommendations,
+                classification=classification,
+                company_overviews=company_overviews,
+                consolidated_data=consolidated_data,
+                chart_data=chart_data
+            )
+
+        except Exception as e:
+            logger.error(f"Gemini call failed: {str(e)}")
+            processed_llm_response = [
+                f"I apologize, but I encountered an error while generating the response: {str(e)}"]
+
+    # Step 11: Return comprehensive response
     total_request_duration = time.time() - request_start_time
     logger.info(f"Total copilot request processed in {total_request_duration:.2f} seconds.")
+
     return {
         "llm_response": processed_llm_response,
         "enhanced_context_data": enhanced_context_data,
         "company_overviews": company_overviews,
-        "shareholding_data": shareholding_data,
-        "ratios_data": ratios_data,
         "chart_data": chart_data,
-        "financial_data": financial_data,
+        "consolidated_data": consolidated_data,
         "display_recommendations": display_recommendations,
         "classification": classification,
         "company_ids": company_ids_to_use,
         "context_info": {
+            "query_type": query_type,
+            "is_comparison": is_comparison,
+            "skip_gemini": skip_gemini,
             "endpoint_routing": {
                 "endpoint_type": endpoint_type,
                 "endpoint_mode": endpoint_mode,
@@ -619,10 +632,15 @@ async def ask_copilot(request: CopilotRequest):
             "data_availability": {
                 "company_overviews": len(
                     [d for d in company_overviews if not (isinstance(d, dict) and d.get('error'))]),
-                "shareholding_patterns": len(
-                    [d for d in shareholding_data if not (isinstance(d, dict) and d.get('error'))]),
                 "charts": 1 if chart_data and not chart_data.get('error') else 0,
-                "financial_tables": len([d for d in financial_data if not (isinstance(d, dict) and d.get('error'))])
+                "financial_statements": len(consolidated_data.get('financial_statements', {})),
+                "ratios": len(consolidated_data.get('ratios', {})),
+                "shareholding": len(consolidated_data.get('shareholding', [])),
+                "dividend": len(consolidated_data.get('dividend', [])),
+                "insider_trading": len(consolidated_data.get('insider_trading', [])),
+                "rpt": len(consolidated_data.get('rpt', [])),
+                "pledged_data": len(consolidated_data.get('pledged_data', [])),
+                "corporate_governance": len(consolidated_data.get('corporate_governance', []))
             },
             "resolved_companies": enhanced_context_data.get("resolved_companies", []),
             "total_context_length": len(combined_context)
@@ -631,30 +649,29 @@ async def ask_copilot(request: CopilotRequest):
 
 
 def process_llm_response(
-    llm_response_text: str,
-    display_recommendations: Dict,
-    classification: Dict,
-    company_overviews: List,
-    shareholding_data: List,
-    ratios_data: Dict,
-    chart_data: Dict,
-    financial_data: Dict
+        llm_response_text: str,
+        display_recommendations: Dict,
+        classification: Dict,
+        company_overviews: List,
+        consolidated_data: Dict,
+        chart_data: Dict
 ) -> List[Any]:
-    """
-    Process the LLM response to split it by placeholders and inject metadata.
-    """
+    """Process the LLM response to split it by placeholders and inject metadata."""
+
     placeholder_patterns = [
         '~OVERVIEW_STATS_TABLE~', '~COMPARISON_TABLE~', '~SHAREHOLDING_TABLE~',
         '~RATIOS_TABLE~', '~COMPREHENSIVE_RATIOS_TABLE~', '~FINANCIAL_PARAMETERS_TABLE~',
-        '~CHARTS_SECTION~', '~FINANCIAL_DATA_TABLE~'
+        '~CHARTS_SECTION~', '~FINANCIAL_DATA_TABLE~', '~DIVIDEND_TABLE~',
+        '~INSIDER_TRADING_TABLE~', '~RPT_TABLE~', '~PLEDGED_DATA_TABLE~',
+        '~CORPORATE_GOVERNANCE_TABLE~', '~STOCK_CHART_SECTION~'
     ]
 
-    # Create a regex to find any of the placeholders
+    # Create regex to find placeholders
     regex = re.compile(f"({'|'.join(re.escape(p) for p in placeholder_patterns)})")
     parts = regex.split(llm_response_text)
 
     output = []
-    processed_placeholders = set()  # Keep track of processed placeholders
+    processed_placeholders = set()
 
     for part in parts:
         if not part:
@@ -663,50 +680,73 @@ def process_llm_response(
         if part in placeholder_patterns:
             placeholder = part
             if placeholder in processed_placeholders:
-                # If this placeholder has been processed, skip it to avoid duplication
                 continue
 
             metadata = {"placeholder": placeholder, "type": "error", "data": "Error loading table/chart"}
 
-            # Determine the type and check for data availability
-            if placeholder == '~CHARTS_SECTION~':
+            # Determine type and check data availability
+            if placeholder in ['~CHARTS_SECTION~', '~STOCK_CHART_SECTION~']:
                 if display_recommendations.get('chart', False) and chart_data and not chart_data.get('error'):
+                    chart_type = "stock_chart" if placeholder == '~STOCK_CHART_SECTION~' else "financial_chart"
                     metadata = {
                         "placeholder": placeholder,
                         "type": "chart",
-                        "chart_type": classification.get('chart_endpoint_type', 'parameters'),
+                        "chart_type": chart_type,
                         "parameters": classification.get('chart_parameters', [])
                     }
                 else:
                     metadata["data"] = "Chart data is not available or not recommended for display."
 
-            else:  # It's a table
+            else:
+                # Handle table placeholders
                 table_type = "unknown"
                 data_available = False
 
                 if placeholder == '~OVERVIEW_STATS_TABLE~':
                     table_type = "company_overview"
-                    if display_recommendations.get('company_overview', False) and any(
-                            is_valid_response(d) for d in company_overviews):
-                        data_available = True
+                    data_available = display_recommendations.get('company_overview', False) and any(
+                        is_valid_response(d) for d in company_overviews)
 
                 elif placeholder == '~SHAREHOLDING_TABLE~':
                     table_type = "shareholding"
-                    if display_recommendations.get('shareholding', False) and any(
-                            is_valid_response(d) for d in shareholding_data):
-                        data_available = True
+                    data_available = bool(consolidated_data.get('shareholding')) and any(
+                        is_valid_response(d) for d in consolidated_data['shareholding'])
+
+                elif placeholder == '~DIVIDEND_TABLE~':
+                    table_type = "dividend"
+                    data_available = bool(consolidated_data.get('dividend')) and any(
+                        is_valid_response(d) for d in consolidated_data['dividend'])
+
+                elif placeholder == '~INSIDER_TRADING_TABLE~':
+                    table_type = "insider_trading"
+                    data_available = bool(consolidated_data.get('insider_trading')) and any(
+                        is_valid_response(d) for d in consolidated_data['insider_trading'])
+
+                elif placeholder == '~RPT_TABLE~':
+                    table_type = "rpt"
+                    data_available = bool(consolidated_data.get('rpt')) and any(
+                        is_valid_response(d) for d in consolidated_data['rpt'])
+
+                elif placeholder == '~PLEDGED_DATA_TABLE~':
+                    table_type = "pledged_data"
+                    data_available = bool(consolidated_data.get('pledged_data')) and any(
+                        is_valid_response(d) for d in consolidated_data['pledged_data'])
+
+                elif placeholder == '~CORPORATE_GOVERNANCE_TABLE~':
+                    table_type = "corporate_governance"
+                    data_available = bool(consolidated_data.get('corporate_governance')) and any(
+                        is_valid_response(d) for d in consolidated_data['corporate_governance'])
 
                 elif placeholder in ['~RATIOS_TABLE~', '~COMPREHENSIVE_RATIOS_TABLE~', '~COMPARISON_TABLE~']:
                     table_type = "ratios"
-                    if display_recommendations.get('table', False) and any(
-                            is_valid_response(d) for d in ratios_data.values()):
-                        data_available = True
+                    data_available = bool(consolidated_data.get('ratios')) and any(
+                        is_valid_response(d) for d in consolidated_data['ratios'].values())
 
                 elif placeholder in ['~FINANCIAL_PARAMETERS_TABLE~', '~FINANCIAL_DATA_TABLE~']:
                     table_type = "financials"
-                    if display_recommendations.get('table', False) and any(
-                            is_valid_response(d) for table_data in financial_data.values() for d in table_data):
-                        data_available = True
+                    data_available = bool(consolidated_data.get('financial_statements')) and any(
+                        is_valid_response(d) for table_data in consolidated_data['financial_statements'].values()
+                        for d in table_data)
 
                 if data_available:
                     metadata = {
@@ -719,75 +759,34 @@ def process_llm_response(
                     metadata["data"] = f"Table data for '{table_type}' is not available or not recommended for display."
 
             output.append(metadata)
-            processed_placeholders.add(placeholder)  # Mark as processed
+            processed_placeholders.add(placeholder)
         else:
             output.append(part.strip())
 
-    # Filter out empty strings that may result from splitting
+    # Filter out empty strings
     return [item for item in output if item]
 
 
-def consolidate_financial_data(results: List, task_order: List[str], classification: Dict) -> Dict:
-    """
-    Consolidate data from multiple endpoints into organized structure
-    """
-    consolidated = {
-        'company_overviews': [],
-        'chart_data': {},
-        'financial_statements': {},
-        'ratios': {},
-        'shareholding': []
-    }
-
-    response_idx = 0
-    for task_type in task_order:
-        if response_idx >= len(results):
-            break
-
-        if task_type == 'overview':
-            consolidated['company_overviews'].append(results[response_idx])
-        elif task_type == 'chart':
-            consolidated['chart_data'] = results[response_idx]
-        elif task_type.startswith('financial_'):
-            # Parse the task name to categorize data
-            parts = task_type.split('_')
-            if len(parts) >= 3:
-                data_type = parts[1]  # financials, ratios, shareholding
-                table_or_id = parts[2]
-
-                if data_type == 'financials':
-                    table_name = table_or_id
-                    if table_name not in consolidated['financial_statements']:
-                        consolidated['financial_statements'][table_name] = []
-                    consolidated['financial_statements'][table_name].append(results[response_idx])
-                elif data_type == 'ratios':
-                    consolidated['ratios'][table_or_id] = results[response_idx]
-                elif data_type == 'shareholding':
-                    consolidated['shareholding'].append(results[response_idx])
-
-        response_idx += 1
-
-    return consolidated
-
-
 def format_company_stats(stats: dict) -> str:
-    """
-    Convert the stats dict (from overview endpoint) into a readable string for LLM context.
-    """
+    """Convert stats dict into readable string for LLM context."""
     if not stats or not isinstance(stats, dict):
         return ""
+
     lines = []
     for table, data in stats.items():
         lines.append(f"**{table.replace('_', ' ').title()}**")
         columns = data.get("columns", [])
         values = data.get("values", [])
+
         if columns and values:
-            # Render as a simple text table
             col_line = " | ".join(columns)
             lines.append(col_line)
             lines.append("-" * len(col_line))
+
             for row in values:
                 row_line = " | ".join(str(x) if x is not None else "" for x in row)
                 lines.append(row_line)
+
         lines.append("")  # Blank line between tables
+
     return "\n".join(lines)

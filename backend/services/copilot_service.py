@@ -10,16 +10,10 @@ load_dotenv()
 
 
 def strip_md_tables(text: str, default_placeholder: str = "~FINANCIAL_DATA_TABLE~") -> str:
-    """
-    Remove any Markdown table the model still sneaks in and
-    replace it with the generic placeholder so the front-end
-    can inject the real table.
-    """
+    """Remove any Markdown table the model still sneaks in and replace with placeholder"""
     md_table_regex = re.compile(r"^(?:\s*\|.*\|\s*$\n?)+", re.MULTILINE)
     if md_table_regex.search(text):
-        # wipe every markdown grid we find
         text = md_table_regex.sub("", text)
-        # ensure *one* placeholder after first paragraph
         paras = text.split("\n\n")
         if default_placeholder not in text:
             if paras:
@@ -30,17 +24,14 @@ def strip_md_tables(text: str, default_placeholder: str = "~FINANCIAL_DATA_TABLE
 
 def enforce_bullet_format(text: str) -> str:
     """Convert paragraphs to bullet points"""
-    # Convert numbered lists to bullets
     text = re.sub(r'^\d+\.\s+', '- ', text, flags=re.MULTILINE)
 
-    # Split paragraphs into bullets if they don't already start with bullets
     if '\n\n' in text and not text.strip().startswith('-'):
         paragraphs = text.split('\n\n')
         bullet_paragraphs = []
         for para in paragraphs:
             para = para.strip()
             if para and not para.startswith('-') and not para.startswith('~') and not para.startswith('**'):
-                # Convert paragraph to bullet points
                 sentences = para.split('. ')
                 for sentence in sentences:
                     sentence = sentence.strip()
@@ -55,23 +46,24 @@ def enforce_bullet_format(text: str) -> str:
 def highlight_key_parameters(text: str, params: list) -> str:
     """Bold key parameters in response"""
     for param in params:
-        if param and len(param) > 2:  # Avoid highlighting very short terms
+        if param and len(param) > 2:
             text = re.sub(fr'\b{re.escape(param)}\b', f'**{param}**', text, flags=re.IGNORECASE)
     return text
 
 
 def determine_template_type(user_query: str, context_data: dict = None) -> str:
-    """Enhanced template selection with multi-company support"""
+    """Enhanced template selection with comprehensive query type support"""
     query_lower = user_query.lower()
 
     # Edge case detection
     edge_cases = {
         'news': ['news', 'recent news', 'latest news', 'breaking news'],
-        'forecasting': ['forecast', 'forecasting', 'predict', 'prediction', 'future', 'valuation', 'modelling',
-                        'intrinsic value', 'dcf', 'fair value'],
-        'stock_market': ['stock price', 'share price', 'market data', 'stock market', 'trading', 'volume',
-                         'technical analysis'],
-        'non_finance': ['weather', 'sports', 'entertainment', 'politics', 'technology news', 'india vs pakistan']
+        'forecasting': ['forecast', 'forecasting', 'predict', 'prediction', 'future', 'valuation',
+                        'modelling', 'intrinsic value', 'dcf', 'fair value'],
+        'stock_market': ['stock price', 'share price', 'market data', 'stock market', 'trading',
+                         'volume', 'technical analysis'],
+        'non_finance': ['weather', 'sports', 'entertainment', 'politics', 'technology news',
+                        'india vs pakistan']
     }
 
     for case_type, keywords in edge_cases.items():
@@ -81,40 +73,72 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
     if not context_data:
         return 'default_financial'
 
-    # Enhanced data-driven template selection
+    # Extract context data
+    query_type = context_data.get('query_type', 'company_overview')
+    company_count = context_data.get('company_count', 0)
+    is_comparison = context_data.get('is_comparison', False)
     has_charts = context_data.get('has_charts', False)
     has_financials = context_data.get('has_financials', False)
     has_shareholding = context_data.get('has_shareholding', False)
-    company_count = context_data.get('company_count', 0)
-    endpoint_type = context_data.get('endpoint_type', 'financials')
-    endpoint_mode = context_data.get('endpoint_mode', 'base')
-    query_type = context_data.get('query_type', 'comprehensive')
+    has_dividend = context_data.get('has_dividend', False)
+    has_corporate_governance = context_data.get('has_corporate_governance', False)
 
-    # NEW: Multi-company ratio comparison logic
-    if company_count > 1 and endpoint_type == 'ratios':
-        return 'multi_company_analysis'
+    # Priority-based template selection using query_type
 
-    # Enhanced chart handling
-    if has_charts and any(kw in query_lower for kw in ['trend', 'growth']):
-        return 'trend_analysis_with_charts'
-
-    # Template priority logic
-    if company_count > 1:
-        return 'comparative_analysis'
-    elif 'overview' in query_lower or query_type == 'company_overview':
-        return 'company_overview'
-    elif has_shareholding:
+    # 1. Domain-specific templates (highest priority)
+    if query_type == 'stock_analysis':
+        return 'stock_analysis'
+    elif query_type == 'dividend_analysis':
+        return 'dividend_analysis'
+    elif query_type == 'insider_trading_analysis':
+        return 'insider_trading_analysis'
+    elif query_type == 'rpt_analysis':
+        return 'rpt_analysis'
+    elif query_type == 'pledged_data_analysis':
+        return 'pledged_data_analysis'
+    elif query_type == 'corporate_governance':
+        return 'corporate_governance'
+    elif query_type == 'shareholder_info':
         return 'shareholding_analysis'
-    elif endpoint_type == 'ratios' and endpoint_mode == 'parameters':
-        return 'ratio_analysis_specific'
-    elif endpoint_type == 'ratios':
-        return 'ratio_analysis_comprehensive'
-    elif endpoint_mode == 'parameters' and has_financials:
+
+    # 2. Comparison handling (second priority)
+    if is_comparison or company_count > 1:
+        if query_type == 'ratio_analysis':
+            return 'multi_company_ratios'
+        else:
+            return 'comparative_analysis'
+
+    # 3. Chart-focused templates
+    if has_charts:
+        if query_type == 'stock_analysis':
+            return 'stock_chart_analysis'
+        elif 'trend' in query_lower or 'growth' in query_lower:
+            return 'trend_analysis_with_charts'
+        elif has_financials:
+            return 'comprehensive_with_charts'
+        else:
+            return 'chart_focused_analysis'
+
+    # 4. Financial statement specific templates
+    if query_type == 'ratio_analysis':
+        if context_data.get('endpoint_mode') == 'parameters':
+            return 'ratio_analysis_specific'
+        else:
+            return 'ratio_analysis_comprehensive'
+    elif query_type == 'balance_sheet':
+        return 'balance_sheet_analysis'
+    elif query_type == 'profit_and_loss':
+        return 'profit_loss_analysis'
+    elif query_type == 'cash_flow':
+        return 'cash_flow_analysis'
+    elif query_type == 'comprehensive':
+        return 'comprehensive_financial_analysis'
+
+    # 5. Company overview and defaults
+    if query_type == 'company_overview' or 'overview' in query_lower:
+        return 'company_overview'
+    elif context_data.get('endpoint_mode') == 'parameters':
         return 'parameter_specific_analysis'
-    elif has_charts and has_financials:
-        return 'comprehensive_with_charts'
-    elif has_charts:
-        return 'chart_focused_analysis'
     elif has_financials:
         return 'tabular_analysis'
     else:
@@ -122,16 +146,19 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
 
 
 def get_template_content(template_type: str) -> str:
-    """Return enhanced Jinja2 template content with bullet-point enforcement and a system instruction."""
+    """Return enhanced Jinja2 template content with comprehensive template coverage"""
 
-    # System instruction to guide Gemini to not always respond, but to answer only if context is relevant and to follow rules/query type
+    # System instruction for all templates
     system_instruction = (
         "SYSTEM: Only answer the user's real query if the provided context is relevant and sufficient. "
         "If the context is not relevant or does not contain the required information, do NOT fabricate or repeat the context. "
         "Always follow the rules and formatting instructions for the current query type. "
         "If the context is not needed for the query, ignore it and answer as per the rules. "
-        "Do not provide a response just because context is present; respond only if it is appropriate and required."
-        "\n\n"
+        "Do not provide a response just because context is present; respond only if it is appropriate and required.\n\n"
+        "CRITICAL PLACEHOLDER RULES:\n"
+        "- Insert each placeholder exactly once and only where shown in the template below.\n"
+        "- Do not invent or duplicate placeholders.\n"
+        "- Placeholders must appear on their own line with no surrounding prose or bullets.\n\n"
     )
 
     templates = {
@@ -165,38 +192,38 @@ Please ask questions related to:
 """,
 
         'company_overview': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my analysis to compare multiple companies while using this single-company template format.
+{% endif %}
+
 IMPORTANT • Present all analysis in bullet points. Do not write paragraphs.
 
 You are a financial analyst providing company overview analysis.
+
 User Query: "{{question}}"
 
-**Key Analysis Sections:**
-- **Financial Highlights**
-- **Performance Assessment**
-- **Investment Perspective**
-
-**Required Format:**
-- Use '- ' prefix for every bullet point
-- Maximum 5 bullet points per section
-- No paragraph-style writing
-
-**Context:** A company overview has been displayed above showing key company information and statistics.
+**Key Analysis Framework:**
 
 ~OVERVIEW_STATS_TABLE~
 
-**Your Task:**
-- Provide a focused analysis covering:
-  - Key Financial Highlights
-  - Performance Assessment
-  - Investment Perspective
+**Financial Analysis:**
 
-- Use bullet points for all analysis.
-- Summarize key insights in concise bullet points.
-- Break down complex information into a series of bullet points.
-- Ensure each point starts with a bullet ('-').
+- **Key Performance Highlights**
+  - Revenue and profitability trends
+  - Market position and competitive advantages
+  - Financial stability indicators
 
-**Available Financial Data:**
-{{context}}
+- **Operational Efficiency**
+  - Asset utilization metrics
+  - Working capital management
+  - Cost control effectiveness
+
+- **Investment Perspective**
+  - Growth prospects and sustainability
+  - Risk factors and mitigation
+  - Valuation considerations
+
+**Context:** {{context}}
 
 **Formatting Rules:**
 - Use bullet points exclusively
@@ -205,480 +232,602 @@ User Query: "{{question}}"
 - Reference placeholders: ~PLACEHOLDER_NAME~
 
 **Instructions:**
-- Be concise and actionable
-- Focus on insights not already covered in the overview above
+- Focus on strategic insights not covered in overview table
 - Use specific numbers when available
-- Avoid repeating basic company information already displayed
-- Present all analysis under each heading as concise bullet points.
-- Ensure each point starts with a bullet (e.g., `-`).""",
+- Present all analysis as concise bullet points
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
 
-        'multi_company_analysis': """{% set no_raw_tables = true %}
+        'stock_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my stock analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present stock analysis in bullet points only
+
+You are analyzing stock price movements and market data.
+
+User Query: "{{question}}"
+
+**Stock Performance Analysis:**
+
+~STOCK_CHART_SECTION~
+
+**Market Analysis:**
+
+- **Price Trends**
+  - Current price trajectory and momentum
+  - Key support and resistance levels
+  - Volume analysis and market sentiment
+
+- **Technical Indicators**
+  - Moving average analysis (DMA50/DMA200)
+  - Price volatility patterns
+  - Trading volume trends
+
+- **Performance Context**
+  - Relative performance vs market indices
+  - Peer comparison within sector
+  - Historical performance benchmarks
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key technical terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on technical and price action insights
+- Reference specific price levels and trends
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'dividend_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my dividend analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present dividend analysis in bullet points only
+
+You are analyzing dividend policies and distributions.
+
+User Query: "{{question}}"
+
+**Dividend Analysis:**
+
+~DIVIDEND_TABLE~
+
+**Dividend Assessment:**
+
+- **Dividend Policy**
+  - Current dividend yield and payout ratio
+  - Dividend growth history and sustainability
+  - Policy consistency and management commitment
+
+- **Financial Capacity**
+  - Cash flow adequacy for dividend payments
+  - Earnings coverage and stability
+  - Balance sheet strength supporting dividends
+
+- **Investor Implications**
+  - Income generation potential
+  - Total return considerations
+  - Dividend reinvestment opportunities
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key dividend terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on dividend sustainability and policy
+- Reference specific dividend rates and dates
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'insider_trading_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my insider trading analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present insider trading analysis in bullet points only
+
+You are analyzing insider trading patterns and implications.
+
+User Query: "{{question}}"
+
+**Insider Trading Data:**
+
+~INSIDER_TRADING_TABLE~
+
+**Insider Activity Analysis:**
+
+- **Trading Patterns**
+  - Recent insider buying vs selling activity
+  - Transaction volumes and frequencies
+  - Key insider participants (promoters, directors)
+
+- **Market Signals**
+  - What insider activity suggests about company prospects
+  - Correlation with stock price movements
+  - Management confidence indicators
+
+- **Governance Implications**
+  - Compliance with regulatory requirements
+  - Transparency in insider disclosures
+  - Impact on investor confidence
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key trading terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on patterns and implications
+- Reference specific transaction details
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'rpt_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my RPT analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present RPT analysis in bullet points only
+
+You are analyzing Related Party Transactions.
+
+User Query: "{{question}}"
+
+**Related Party Transactions:**
+
+~RPT_TABLE~
+
+**RPT Analysis:**
+
+- **Transaction Overview**
+  - Types and nature of related party transactions
+  - Transaction volumes and materiality
+  - Key related parties involved
+
+- **Business Rationale**
+  - Commercial justification for transactions
+  - Arms-length pricing verification
+  - Strategic business benefits
+
+- **Governance Assessment**
+  - Board approval processes
+  - Independent director oversight
+  - Disclosure quality and transparency
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key RPT terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on transaction fairness and governance
+- Reference specific transaction types and amounts
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'pledged_data_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my pledged data analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present pledged data analysis in bullet points only
+
+You are analyzing share pledging patterns and implications.
+
+User Query: "{{question}}"
+
+**Pledged Share Data:**
+
+~PLEDGED_DATA_TABLE~
+
+**Pledging Analysis:**
+
+- **Pledging Overview**
+  - Current pledge levels and trends
+  - Promoter vs institutional pledging
+  - Pledge release patterns
+
+- **Financial Implications**
+  - Liquidity and financing needs
+  - Debt servicing capabilities
+  - Impact on ownership control
+
+- **Risk Assessment**
+  - Margin call risks and thresholds
+  - Market volatility impact
+  - Corporate governance considerations
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key pledging terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on pledging risks and implications
+- Reference specific pledge percentages
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'corporate_governance': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my corporate governance analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present corporate governance analysis in bullet points only
+
+You are analyzing corporate governance structures and practices.
+
+User Query: "{{question}}"
+
+**Corporate Governance Data:**
+
+~CORPORATE_GOVERNANCE_TABLE~
+
+**Governance Analysis:**
+
+- **Board Composition**
+  - Board independence and diversity
+  - Director qualifications and experience
+  - Board meeting frequency and attendance
+
+- **Committee Effectiveness**
+  - Audit committee structure and function
+  - Nomination and remuneration oversight
+  - Risk management committee role
+
+- **Governance Quality**
+  - Best practice adherence
+  - Regulatory compliance record
+  - Shareholder rights protection
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key governance terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on governance quality and effectiveness
+- Reference specific board and committee details
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'multi_company_ratios': """{% set no_raw_tables = true %}
 IMPORTANT • Compare companies using bullet points only
 
-You are a financial analyst conducting multi-company comparative analysis.
+You are conducting multi-company ratio analysis and comparison.
+
 User Query: "{{question}}"
 
-**Comparative Analysis Framework:**
-- **Financial Metrics Comparison**
-  - Metric 1: {{company_a}} vs {{company_b}}
-  - Metric 2: {{company_a}} vs {{company_b}}
-- **Performance Benchmarks**
-- **Investment Risk Profiles**
+**Multi-Company Ratio Comparison:**
 
-**Data Sources:**
 ~COMPARISON_TABLE~
-~RATIOS_TABLE~
 
-**Available Context:**
-{{context}}
+**Comparative Ratio Analysis:**
 
-**Your Analysis Should Cover:**
+- **Profitability Comparison**
+  - ROE, ROA, and margin comparisons
+  - Earnings quality across companies
+  - Profitability trend analysis
 
-**📊 Key Metrics Comparison**
-- Compare the most significant financial ratios between companies
-- Highlight which company leads in each category
-- Identify percentage differences in key metrics
+- **Efficiency Metrics**
+  - Asset turnover comparisons
+  - Working capital management efficiency
+  - Operational effectiveness ratios
 
-**⚡ Performance Analysis**
-- Analyze relative operational efficiency
-- Compare growth trajectories and trends
-- Assess financial stability indicators
+- **Financial Health Assessment**
+  - Liquidity ratio comparisons
+  - Leverage and solvency analysis
+  - Credit quality indicators
 
-**🎯 Investment Implications**
-- Determine which company offers better value proposition
-- Evaluate risk-reward profiles for each
-- Provide investor-focused recommendations
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Focus on comparative insights only
-- Use specific percentages and ratios
-- Present analysis in bullet point format
-- Ensure each point starts with a bullet (e.g., `-`)""",
-
-        'trend_analysis_with_charts': """{% set no_raw_tables = true %}
-IMPORTANT • Present trend analysis in bullet points only
-
-You are analyzing financial trends with visual data support.
-User Query: "{{question}}"
-
-**Trend Analysis with Charts:**
-
-**📈 Visual Trends Analysis**
-~CHARTS_SECTION~
-
-**📊 Key Trend Insights**
-- Identify primary growth or decline patterns
-- Highlight significant trend changes or inflection points
-- Compare year-over-year progression metrics
-
-**⏱️ Time-Based Performance**
-- Analyze seasonal or cyclical patterns
-- Assess consistency of performance trends
-- Evaluate momentum indicators
-
-**🔮 Future Implications**
-- Determine trend sustainability
-- Identify potential risk factors
-- Assess competitive positioning trends
+- **Investment Rankings**
+  - Best-in-class performers by category
+  - Risk-adjusted return considerations
+  - Valuation metric comparisons
 
 **Supporting Context:**
 {{context}}
 
 **Formatting Rules:**
 - Use bullet points exclusively
-- Bold key financial terms
+- Bold key ratio names and companies
 - Never use markdown tables
 - Reference placeholders: ~PLACEHOLDER_NAME~
 
 **Instructions:**
-- Reference both visual and contextual data
-- Focus on trend interpretation
-- Present analysis in bullet point format
-- Ensure each point starts with a bullet (e.g, `-`)""",
+- Focus on relative performance comparisons
+- Identify clear winners in each category
+- Use specific ratio values and percentages
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
 
         'comparative_analysis': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
+IMPORTANT • Compare companies using bullet points only
 
-You are a financial analyst comparing multiple companies.
+You are conducting comprehensive multi-company comparison.
+
 User Query: "{{question}}"
 
-**Available Data:**
-{{context}}
+**Multi-Company Analysis:**
 
-**Analysis Framework:**
-Provide a structured comparison using these sections:
-
-**📊 Key Metrics Comparison**
 ~COMPARISON_TABLE~
 
-**💡 Performance Analysis**
-- Highlight the top performer in each key area
-- Identify relative strengths and weaknesses
-- Note any significant differences in business models
+**Comparative Assessment:**
 
-**🎯 Investment Implications**
-- Which company offers better value proposition?
-- Risk considerations for each
-- Suitability for different investor types
+- **Financial Performance**
+  - Revenue and profitability comparisons
+  - Growth trajectory analysis
+  - Market share and positioning
 
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
+- **Operational Efficiency**
+  - Cost management effectiveness
+  - Asset utilization comparisons
+  - Working capital optimization
 
-**Instructions:**
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).
-- Include specific metrics and percentages
-- Be objective and fact-based
-- Conclude with a brief comparative summary""",
+- **Strategic Positioning**
+  - Competitive advantages and moats
+  - Market leadership positions
+  - Innovation and R&D capabilities
 
-        'shareholding_analysis': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are analyzing company shareholding patterns and ownership structure.
-User Query: "{{question}}"
-
-**Shareholding Data:**
-~SHAREHOLDING_TABLE~
-
-**Financial Context:**
-{{context}}
-
-**Your Analysis Should Cover:**
-
-**🏢 Ownership Structure**
-- Key institutional and individual shareholders
-- Promoter vs public holding analysis
-- Any significant recent changes in holdings
-
-**📈 Shareholding Insights**
-- Quality of institutional investors
-- Concentration vs diversification of ownership
-- Impact on company governance and decision-making
-
-**💼 Investment Implications**
-- What the shareholding pattern suggests about confidence
-- Liquidity considerations
-- Governance quality indicators
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Reference specific shareholders and percentages
-- Explain the significance of major holdings
-- Connect shareholding to company performance and strategy
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
-
-        'ratio_analysis_specific': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are a financial analyst focusing on specific financial ratios.
-User Query: "{{question}}"
-
-**Requested Ratios Analysis:**
-~RATIOS_TABLE~
+- **Investment Conclusion**
+  - Best value propositions identified
+  - Risk-reward profiles compared
+  - Portfolio allocation recommendations
 
 **Supporting Context:**
 {{context}}
 
-**Detailed Ratio Analysis:**
-
-**📊 Ratio Interpretation**
-- What each ratio indicates about company performance
-- Industry benchmarking context where relevant
-- Trends and year-over-year changes
-
-**🔍 Deep Dive Insights**
-- Interconnections between the ratios
-- What the ratios reveal about management efficiency
-- Red flags or positive indicators
-
-**📈 Performance Assessment**
-- Overall financial health based on these metrics
-- Comparative performance vs industry standards
-- Areas for improvement or concern
-
 **Formatting Rules:**
 - Use bullet points exclusively
-- Bold key financial terms
+- Bold company names and key metrics
 - Never use markdown tables
 - Reference placeholders: ~PLACEHOLDER_NAME~
 
 **Instructions:**
-- Focus specifically on the requested ratios
-- Provide numerical context and percentages
-- Explain what each ratio means in plain language
-- Connect ratios to business performance
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
+- Provide clear comparative insights
+- Rank companies by performance categories
+- Use specific metrics and percentages
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
 
         'ratio_analysis_comprehensive': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my ratio analysis to compare multiple companies.
+{% endif %}
 
-You are conducting a comprehensive financial ratio analysis.
+IMPORTANT • Present comprehensive ratio analysis in bullet points
+
+You are conducting detailed financial ratio analysis.
+
 User Query: "{{question}}"
 
-**Complete Ratio Analysis:**
+**Comprehensive Ratio Analysis:**
+
 ~COMPREHENSIVE_RATIOS_TABLE~
 
-**Supporting Data:**
-{{context}}
+**Financial Health Assessment:**
 
-**Comprehensive Financial Health Assessment:**
+- **Profitability Analysis**
+  - Revenue efficiency and margin trends
+  - Return on capital metrics (ROE, ROA, ROIC)
+  - Earnings quality and sustainability
 
-**💰 Profitability Analysis**
-- Revenue efficiency and margin trends
-- Return on assets and equity performance
-- Earnings quality assessment
+- **Liquidity & Solvency**
+  - Short-term financial flexibility
+  - Debt management and leverage ratios
+  - Cash flow adequacy ratios
 
-**🏦 Liquidity & Solvency**
-- Short-term financial flexibility
-- Debt management and leverage
-- Cash flow adequacy
+- **Efficiency Metrics**
+  - Asset utilization effectiveness
+  - Working capital management
+  - Inventory and receivables turnover
 
-**⚡ Efficiency Metrics**
-- Asset utilization effectiveness
-- Working capital management
-- Operational efficiency indicators
-
-**📊 Overall Financial Score**
-- Integrated assessment across all ratio categories
-- Key strengths and weaknesses
-- Strategic financial recommendations
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-Use the comprehensive ratio data to provide actionable insights.
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
-
-        'parameter_specific_analysis': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are analyzing specific financial statement parameters.
-User Query: "{{question}}"
-
-**Focused Parameter Analysis:**
-~FINANCIAL_PARAMETERS_TABLE~
-
-**Context:**
-{{context}}
-
-**Parameter-Specific Insights:**
-
-**📋 Parameter Overview**
-- What these specific metrics represent
-- Their importance in financial analysis
-- Industry context and benchmarks
-
-**🔢 Numerical Analysis**
-- Trends across the time periods shown
-- Percentage changes and growth rates
-- Absolute values and their significance
-
-**💡 Strategic Implications**
-- What these parameters reveal about business strategy
-- Management decisions reflected in the numbers
-- Future outlook based on current trends
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Focus exclusively on the requested parameters
-- Provide specific numerical insights
-- Explain business implications of the trends
-- Keep analysis targeted and actionable
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
-
-        'comprehensive_with_charts': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are providing comprehensive financial analysis with visual data support.
-User Query: "{{question}}"
-
-**Multi-Dimensional Analysis:**
-
-**📊 Visual Trends Analysis**
-~CHARTS_SECTION~
-
-The charts above illustrate key trends. Based on this visual data and the supporting context:
-
-**📈 Performance Trends**
-- Key patterns visible in the chart data
-- Year-over-year progression analysis
-- Seasonal or cyclical patterns
-
-**💹 Financial Data Deep Dive**
-~FINANCIAL_DATA_TABLE~
-
-**🎯 Integrated Insights**
-- How the visual trends correlate with financial metrics
-- Cross-validation between chart and table data
-- Emerging patterns and future implications
+- **Market Valuation**
+  - P/E, P/B, and EV multiples
+  - Dividend yield and payout ratios
+  - Market premium/discount analysis
 
 **Supporting Context:**
 {{context}}
 
 **Formatting Rules:**
 - Use bullet points exclusively
-- Bold key financial terms
+- Bold key ratio categories
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Provide integrated ratio interpretation
+- Connect ratios to business fundamentals
+- Use industry benchmarking context
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'balance_sheet_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my balance sheet analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present balance sheet analysis in bullet points
+
+You are analyzing balance sheet strength and composition.
+
+User Query: "{{question}}"
+
+**Balance Sheet Analysis:**
+
+~FINANCIAL_DATA_TABLE~
+
+**Asset-Liability Assessment:**
+
+- **Asset Quality**
+  - Current vs non-current asset composition
+  - Asset turnover and utilization efficiency
+  - Working capital management effectiveness
+
+- **Capital Structure**
+  - Debt-to-equity ratios and leverage
+  - Interest coverage and debt serviceability
+  - Equity base strength and growth
+
+- **Liquidity Position**
+  - Cash and cash equivalents adequacy
+  - Current ratio and quick ratio analysis
+  - Short-term financing needs
+
+- **Financial Stability**
+  - Balance sheet growth sustainability
+  - Off-balance sheet obligations
+  - Credit quality indicators
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key balance sheet items
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on balance sheet strength indicators
+- Reference specific asset/liability items
+- Connect to business strategy implications
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'comprehensive_with_charts': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my analysis to compare multiple companies while incorporating chart insights.
+{% endif %}
+
+IMPORTANT • Integrate visual and tabular analysis in bullet points
+
+You are providing comprehensive analysis with visual data support.
+
+User Query: "{{question}}"
+
+**Visual Trend Analysis:**
+
+~CHARTS_SECTION~
+
+**Integrated Financial Analysis:**
+
+~FINANCIAL_DATA_TABLE~
+
+**Comprehensive Assessment:**
+
+- **Trend Insights**
+  - Key patterns visible in chart data
+  - Year-over-year progression analysis
+  - Seasonal or cyclical patterns identified
+
+- **Data Correlation**
+  - How visual trends align with financial metrics
+  - Cross-validation between charts and tables
+  - Performance consistency verification
+
+- **Strategic Implications**
+  - What trends suggest about business direction
+  - Management effectiveness indicators
+  - Future performance predictors
+
+- **Investment Perspective**
+  - Combined visual and fundamental analysis
+  - Risk factors identified from trends
+  - Opportunity areas highlighted
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key insights and metrics
 - Never use markdown tables
 - Reference placeholders: ~PLACEHOLDER_NAME~
 
 **Instructions:**
 - Reference both visual and tabular data
-- Identify correlations between different data types
-- Provide forward-looking insights based on trends
-- Maintain focus on actionable intelligence
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
-
-        'chart_focused_analysis': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are analyzing financial data with primary focus on visual trends.
-User Query: "{{question}}"
-
-**Chart-Based Financial Analysis:**
-
-**📊 Visual Data Presentation**
-~CHARTS_SECTION~
-
-**📈 Trend Analysis**
-Based on the charts above and supporting context:
-
-- **Primary Trends:** Key patterns and movements
-- **Performance Indicators:** What the trends suggest about performance
-- **Comparative Analysis:** How metrics relate to each other over time
-- **Future Implications:** What current trends might indicate
-
-**Supporting Context:**
-{{context}}
-
-**Key Insights:**
-- Focus on what the visual data reveals
-- Identify inflection points and significant changes
-- Provide context for trend interpretations
-- Connect visual patterns to business fundamentals
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Lead with chart insights
-- Reference specific time periods and values
-- Explain the significance of trend directions
-- Provide actionable conclusions
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
-
-        'tabular_analysis': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
-
-You are analyzing detailed financial data from company statements.
-User Query: "{{question}}"
-
-**Financial Statement Analysis:**
-
-**📋 Data Overview**
-~FINANCIAL_DATA_TABLE~
-
-**🔍 Detailed Analysis**
-Based on the financial data above:
-
-**Key Financial Highlights:**
-- Most significant figures and their implications
-- Year-over-year changes and growth patterns
-- Notable strengths and concerns in the data
-
-**Performance Assessment:**
-- What the numbers reveal about company health
-- Efficiency and profitability indicators
-- Cash flow and liquidity considerations
-
-**Strategic Insights:**
-- Management decisions reflected in the financials
-- Competitive positioning based on metrics
-- Areas requiring attention or improvement
-
-**Supporting Context:**
-{{context}}
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key financial terms
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Reference specific figures from the table
-- Provide percentage calculations and comparisons
-- Focus on material changes and trends
-- Deliver actionable financial insights
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`).""",
+- Identify correlations and contradictions
+- Provide forward-looking insights
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
 
         'default_financial': """{% set no_raw_tables = true %}
-IMPORTANT • Do **not** render any markdown tables. Only reference the placeholder(s) shown below — the real
-table / chart will be injected by the front-end.
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my financial analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present financial analysis in bullet points
 
 You are a financial analyst providing comprehensive company analysis.
+
 User Query: "{{question}}"
 
 **Financial Analysis:**
-Based on the available financial information and context provided:
 
+Based on the available financial information:
+
+~FINANCIAL_DATA_TABLE~
+
+**Key Financial Assessment:**
+
+- **Performance Overview**
+  - Key metrics and performance indicators
+  - Important trends and patterns identified
+  - Significant financial highlights
+
+- **Operational Insights**
+  - What the data reveals about efficiency
+  - Strengths and areas of concern
+  - Competitive positioning indicators
+
+- **Strategic Perspective**
+  - Management effectiveness indicators
+  - Capital allocation efficiency
+  - Growth sustainability factors
+
+- **Investment Implications**
+  - Risk factors and opportunities
+  - Valuation considerations
+  - Portfolio fit assessment
+
+**Supporting Context:**
 {{context}}
-
-**Analysis Framework:**
-
-**📊 Financial Overview**
-- Key metrics and performance indicators
-- Important trends and patterns identified
-- Significant financial highlights
-
-**💡 Key Insights**
-- What the data reveals about company performance
-- Strengths and areas of concern
-- Competitive positioning and efficiency
-
-**🎯 Investment Perspective**
-- What this analysis means for stakeholders
-- Risk factors and opportunities identified
-- Overall assessment and recommendations
 
 **Formatting Rules:**
 - Use bullet points exclusively
@@ -690,12 +839,11 @@ Based on the available financial information and context provided:
 - Provide clear, structured analysis
 - Use specific data points when available
 - Focus on actionable insights
-- Maintain objective, professional tone
-- Use bullet points for clarity
-- Ensure each point starts with a bullet (e.g, `-`)."""
+- Ensure each point starts with a bullet (e.g., `-`)
+"""
     }
 
-    # Prepend the system instruction to every template
+    # Prepend system instruction to every template
     templates = {k: system_instruction + v for k, v in templates.items()}
 
     return templates.get(template_type, templates['default_financial'])
@@ -706,11 +854,12 @@ async def get_copilot_response(
         refined_context: str = "",
         context_data: dict = None
 ):
-    """Enhanced copilot response with dynamic template selection and bullet-point enforcement"""
+    """Enhanced copilot response with comprehensive template selection"""
+
     print("DEBUG: Enter get_copilot_response with context_data:", context_data)
 
     if not refined_context:
-        print("DEBUG: No refined context from Colab, using fallback")
+        print("DEBUG: No refined context, using fallback")
         refined_context = "No specific financial context was retrieved for this query."
 
     # Determine appropriate template
@@ -719,6 +868,7 @@ async def get_copilot_response(
 
     # Get template content
     template_content = get_template_content(template_type)
+
     # For edge cases, return immediately without calling Gemini
     if template_type in ['news', 'forecasting', 'stock_market', 'non_finance']:
         return {
@@ -727,7 +877,7 @@ async def get_copilot_response(
             "template_type": template_type
         }
 
-    # If no context is found for a valid financial query, apologize
+    # If no context for financial query, apologize
     if refined_context == "No specific financial context was retrieved for this query.":
         return {
             "response": "I apologize, but I currently lack the specific training data required to answer your question accurately.",
@@ -747,7 +897,10 @@ async def get_copilot_response(
     # Add context-specific variables
     if context_data:
         template_vars.update({
+            'context_data': context_data,
             'company_count': context_data.get('company_count', 1),
+            'query_type': context_data.get('query_type', 'company_overview'),
+            'is_comparison': context_data.get('is_comparison', False),
             'endpoint_type': context_data.get('endpoint_type', 'financials'),
             'has_charts': context_data.get('has_charts', False),
             'has_financials': context_data.get('has_financials', False),
@@ -756,7 +909,7 @@ async def get_copilot_response(
 
     # Render the template
     formatted_prompt = template.render(**template_vars)
-    print(f"DEBUG: Formatted prompt for Gemini: {formatted_prompt[:500]}...")
+    print(f"DEBUG: Formatted prompt for Gemini (first 500 chars): {formatted_prompt[:500]}...")
 
     # Call Gemini API
     gemini_api_key = os.getenv("GEMINI_API_KEY_3")
@@ -768,30 +921,24 @@ async def get_copilot_response(
         llm = ChatGoogleGenerativeAI(
             google_api_key=gemini_api_key,
             model="gemini-2.0-flash-thinking-exp-01-21",
-            temperature=0.3  # Lower temperature for more consistent financial analysis
+            temperature=0.3  # Lower temperature for consistent financial analysis
         )
-
-        # Create a simple prompt wrapper
-        prompt = ChatPromptTemplate.from_messages([
-            ("human", formatted_prompt)
-        ])
-        final_prompt = prompt.format()
 
         # Execute the call
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, llm.invoke, final_prompt)
+        response = await loop.run_in_executor(None, llm.invoke, formatted_prompt)
         print("DEBUG: Gemini response received")
 
-        # Post-process response to ensure placeholder formatting and bullet points
+        # Post-process response
         response_content = response.content if hasattr(response, "content") else str(response)
 
         # Ensure proper placeholder formatting
         response_content = ensure_proper_placeholders(response_content)
 
-        # NEW: Enforce bullet-point formatting
+        # Enforce bullet-point formatting
         response_content = enforce_bullet_format(response_content)
 
-        # NEW: Highlight key parameters if available
+        # Highlight key parameters if available
         if context_data and context_data.get('identified_parameters'):
             params = [p for plist in context_data['identified_parameters'].values() for p in plist]
             response_content = highlight_key_parameters(response_content, params)
@@ -814,44 +961,58 @@ async def get_copilot_response(
 
 def ensure_proper_placeholders(response_content: str) -> str:
     """Ensure response contains proper placeholders for frontend integration"""
-    # Standard placeholder patterns that should be preserved
+
     placeholder_patterns = [
-        '~OVERVIEW_STATS_TABLE~',
-        '~COMPARISON_TABLE~',
-        '~SHAREHOLDING_TABLE~',
-        '~RATIOS_TABLE~',
-        '~COMPREHENSIVE_RATIOS_TABLE~',
-        '~FINANCIAL_PARAMETERS_TABLE~',
-        '~CHARTS_SECTION~',
-        '~FINANCIAL_DATA_TABLE~'
+        '~OVERVIEW_STATS_TABLE~', '~COMPARISON_TABLE~', '~SHAREHOLDING_TABLE~',
+        '~RATIOS_TABLE~', '~COMPREHENSIVE_RATIOS_TABLE~', '~FINANCIAL_PARAMETERS_TABLE~',
+        '~CHARTS_SECTION~', '~FINANCIAL_DATA_TABLE~', '~DIVIDEND_TABLE~',
+        '~INSIDER_TRADING_TABLE~', '~RPT_TABLE~', '~PLEDGED_DATA_TABLE~',
+        '~CORPORATE_GOVERNANCE_TABLE~', '~STOCK_CHART_SECTION~'
     ]
 
-    # If response doesn't contain placeholders but should, add appropriate ones
-    # This is a safety mechanism
-    if not any(placeholder in response_content for placeholder in placeholder_patterns):
-        # Add generic table placeholder if financial data is mentioned
-        if any(term in response_content.lower() for term in ['table', 'data', 'metrics', 'financial']):
-            # Insert placeholder after first paragraph
-            paragraphs = response_content.split('\n\n')
-            if len(paragraphs) > 1:
-                paragraphs.insert(1, '~OVERVIEW_STATS_TABLE~')
-                response_content = '\n\n'.join(paragraphs)
+    # Deduplicate placeholders: keep first, drop the rest
+    for i, ph in enumerate(placeholder_patterns):
+        token = f"__PH_TOKEN_{i}__"
+        if ph in response_content:
+            response_content = response_content.replace(ph, token, 1)
+            # Remove any additional occurrences
+            response_content = response_content.replace(ph, '')
+            # Restore first occurrence
+            response_content = response_content.replace(token, ph)
+
+    # Ensure placeholders are on their own line
+    for ph in placeholder_patterns:
+        response_content = re.sub(rf"(?<!\n){re.escape(ph)}", f"\n{ph}", response_content)
+        response_content = re.sub(rf"{re.escape(ph)}(?!\n)", f"{ph}\n", response_content)
+
+    # Add default placeholder if none exist but content suggests tabular data
+    has_placeholders = any(ph in response_content for ph in placeholder_patterns)
+    if not has_placeholders and any(word in response_content.lower() for word in
+                                    ['financial', 'data', 'table', 'ratio', 'performance']):
+        paragraphs = response_content.split('\n\n')
+        if len(paragraphs) > 1:
+            paragraphs.insert(1, '~FINANCIAL_DATA_TABLE~')
+            response_content = '\n\n'.join(paragraphs)
+
+    # Collapse excessive blank lines
+    response_content = re.sub(r"\n{3,}", "\n\n", response_content)
 
     return response_content
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     # Example usage
-    user_query = "What is the financial overview of Company X?"
-    refined_context = "TCS has shown consistent growth in revenue over the past 5 years."
+    user_query = "What is the dividend policy of TCS?"
+    refined_context = "TCS has consistently paid dividends with a stable payout ratio."
     context_data = {
+        'query_type': 'dividend_analysis',
         'company_count': 1,
-        'endpoint_type': 'financials',
-        'has_charts': True,
-        'has_financials': True,
-        'has_shareholding': False,
+        'endpoint_type': 'dividend',
+        'has_charts': False,
+        'has_dividend': True,
+        'is_comparison': False,
         'identified_parameters': {
-            'profitability': ['ROE', 'ROA'],
-            'liquidity': ['Current Ratio']
+            'dividend': ['dividend_yield', 'payout_ratio']
         }
     }
 

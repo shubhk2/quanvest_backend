@@ -7,14 +7,12 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import logging
 import time  # Import time module
-import psycopg2
 from psycopg2.extras import RealDictCursor
 from backend.db_setup import connect_to_db # Ensure this is correctly set up in your db_setup module
 import asyncio
-import aiofiles
-from typing import Union
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -31,7 +29,14 @@ VALID_TABLES = [
     'balance_sheet',
     'cashflow',
     'financial_ratios',
-    'shareholder'
+    'shareholder',
+    # NEW: dividend context table
+    'dividend',
+    # NEW: stock tables (for last 1 month data snapshot)
+    'stock_price',
+    'stock_dma50',
+    'stock_dma200',
+    'stock_volume'
 ]
 
 
@@ -108,6 +113,75 @@ async def retrieve_table_context_async(company_id: int, table_name: str) -> Opti
     try:
         async with get_async_db_connection() as conn:
             cursor = await run_in_threadpool(conn.cursor, cursor_factory=RealDictCursor)
+
+            # Handle stock tables: return last 1 month of date,value pairs
+            if table_name in {'stock_price', 'stock_dma50', 'stock_dma200', 'stock_volume'}:
+                try:
+                    # 1) Find latest date for this company in the selected stock table
+                    await run_in_threadpool(cursor.execute,
+                                            f"SELECT MAX(date) AS latest_date FROM {table_name} WHERE company_number = %s",
+                                            (company_id,))
+                    latest_row = await run_in_threadpool(cursor.fetchone)
+                    latest_date = latest_row and latest_row.get('latest_date')
+                    if not latest_date:
+                        await run_in_threadpool(cursor.close)
+                        return None
+
+                    # 2) Compute start date = latest_date - 30 days
+                    start_date = latest_date - timedelta(days=30)
+
+                    # 3) Fetch rows in the last month
+                    await run_in_threadpool(
+                        cursor.execute,
+                        f"""
+                        SELECT date, value
+                        FROM {table_name}
+                        WHERE company_number = %s AND date >= %s AND date <= %s
+                        ORDER BY date ASC
+                        """,
+                        (company_id, start_date, latest_date)
+                    )
+                    rows = await run_in_threadpool(cursor.fetchall)
+                    await run_in_threadpool(cursor.close)
+
+                    if not rows:
+                        return None
+
+                    # 4) Format as compact CSV-like text for LLM context
+                    header = f"{table_name} • last_1_month • {start_date.date()} → {latest_date.date()}"
+                    lines = ["date,value"]
+                    for r in rows:
+                        d = r['date'].strftime('%Y-%m-%d') if isinstance(r['date'], datetime) else str(r['date'])
+                        lines.append(f"{d},{r['value']}")
+                    return header + "\n" + "\n".join(lines)
+                except Exception as stock_err:
+                    logger.error(f"Error retrieving stock data for {table_name}: {stock_err}")
+                    await run_in_threadpool(cursor.close)
+                    return None
+
+            # Handle dividend context: table 'dividend' with company_no
+            if table_name == 'dividend':
+                query = """
+                SELECT context
+                FROM dividend
+                WHERE company_no = %s
+                AND context IS NOT NULL
+                AND context != ''
+                """
+                start_time = time.time()
+                await run_in_threadpool(cursor.execute, query, (company_id,))
+                results = await run_in_threadpool(cursor.fetchall)
+                duration = time.time() - start_time
+                await run_in_threadpool(cursor.close)
+                logger.info(f"🔍 DB query for {table_name} took {duration:.4f} seconds")
+                if results:
+                    contexts = [result['context'] for result in results if result.get('context')]
+                    combined_context = "\n\n".join(contexts)
+                    logger.info(f"📊 Retrieved {table_name} context: {len(combined_context)} characters")
+                    return combined_context
+                return None
+
+            # Existing handlers
             if table_name != 'shareholder':
                 query = f"""
                 SELECT context
@@ -117,11 +191,12 @@ async def retrieve_table_context_async(company_id: int, table_name: str) -> Opti
                 AND context != ''
                 """
             else:
-                query=f"""
+                query = f"""
                 SELECT context
                 FROM share_holder
                 WHERE company_no = %s
-                AND context IS NOT NULL """
+                AND context IS NOT NULL
+                """
 
             start_time = time.time()
             await run_in_threadpool(cursor.execute, query, (company_id,))
@@ -133,7 +208,7 @@ async def retrieve_table_context_async(company_id: int, table_name: str) -> Opti
             logger.info(f"🔍 DB query for {table_name} took {duration:.4f} seconds")
 
             if results:
-                contexts = [result['context'] for result in results if result['context']]
+                contexts = [result['context'] for result in results if result.get('context')]
                 combined_context = "\n\n".join(contexts)
                 logger.info(f"📊 Retrieved {table_name} context: {len(combined_context)} characters")
                 return combined_context
@@ -194,6 +269,30 @@ def calculate_table_stats():
     stats = {}
     for table in VALID_TABLES:
         try:
+            # Special handling for stock tables (no 'context' column)
+            if table in {'stock_price', 'stock_dma50', 'stock_dma200', 'stock_volume'}:
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total_rows, MAX(date) AS latest_date FROM {table}"
+                )
+                result = cursor.fetchone()
+                latest_date = result.get('latest_date')
+                recent_rows = 0
+                if latest_date:
+                    start_date = latest_date - timedelta(days=30)
+                    cursor.execute(
+                        f"SELECT COUNT(*) AS cnt FROM {table} WHERE date >= %s AND date <= %s",
+                        (start_date, latest_date)
+                    )
+                    recent_rows = cursor.fetchone().get('cnt', 0)
+                stats[table] = {
+                    "total_rows": result['total_rows'],
+                    "rows_with_context": recent_rows,
+                    "context_coverage": 100.0 if result['total_rows'] else 0.0,
+                    "latest_date": latest_date.strftime('%Y-%m-%d') if latest_date else None
+                }
+                continue
+
+            # Default: tables with 'context' column
             query = f"""
             SELECT
                 COUNT(*) as total_rows,
