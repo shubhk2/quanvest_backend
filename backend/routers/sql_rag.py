@@ -344,11 +344,132 @@ async def rag_health_check():
         }
 
 
+def retrieve_table_context_sync(company_id: int, table_name: str) -> Optional[str]:
+    """Simplified synchronous version that actually works"""
+    if table_name not in VALID_TABLES:
+        logger.warning(f"Invalid table name: {table_name}")
+        return None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Handle stock tables: return last 1 month of date,value pairs
+        if table_name in {'stock_price', 'stock_dma50', 'stock_dma200', 'stock_volume'}:
+            try:
+                # Find latest date for this company
+                cursor.execute(
+                    f"SELECT MAX(date) AS latest_date FROM {table_name} WHERE company_number = %s",
+                    (company_id,))
+                latest_row = cursor.fetchone()
+                latest_date = latest_row and latest_row.get('latest_date')
+
+                if not latest_date:
+                    cursor.close()
+                    conn.close()
+                    return None
+
+                # Get last 30 days
+                from datetime import timedelta
+                start_date = latest_date - timedelta(days=30)
+
+                cursor.execute(f"""
+                    SELECT date, value
+                    FROM {table_name}
+                    WHERE company_number = %s AND date >= %s AND date <= %s
+                    ORDER BY date ASC
+                """, (company_id, start_date, latest_date))
+
+                rows = cursor.fetchall()
+                cursor.close()
+                conn.close()
+
+                if not rows:
+                    return None
+
+                # Format as compact CSV-like text
+                header = f"{table_name} • last_1_month • {start_date.date()} → {latest_date.date()}"
+                lines = ["date,value"]
+                for r in rows:
+                    d = r['date'].strftime('%Y-%m-%d') if hasattr(r['date'], 'strftime') else str(r['date'])
+                    lines.append(f"{d},{r['value']}")
+                return header + "\n" + "\n".join(lines)
+
+            except Exception as stock_err:
+                logger.error(f"Error retrieving stock data for {table_name}: {stock_err}")
+                cursor.close()
+                conn.close()
+                return None
+
+        # Handle dividend table
+        if table_name == 'dividend':
+            query = """
+                SELECT context
+                FROM dividend
+                WHERE company_no = %s
+                AND context IS NOT NULL
+                AND context != ''
+            """
+        # Handle shareholder table
+        elif table_name == 'shareholder':
+            query = """
+                SELECT context
+                FROM share_holder
+                WHERE company_no = %s
+                AND context IS NOT NULL
+            """
+        # Handle other tables
+        else:
+            query = f"""
+                SELECT context
+                FROM {table_name}
+                WHERE company_number = %s
+                AND context IS NOT NULL
+                AND context != ''
+            """
+
+        start_time = time.time()
+        cursor.execute(query, (company_id,))
+        results = cursor.fetchall()
+        duration = time.time() - start_time
+
+        cursor.close()
+        conn.close()
+
+        logger.info(f"🔍 DB query for {table_name} took {duration:.4f} seconds")
+
+        if results:
+            contexts = [result['context'] for result in results if result.get('context')]
+            combined_context = "\n\n".join(contexts)
+            logger.info(f"📊 Retrieved {table_name} context: {len(combined_context)} characters")
+            return combined_context
+        else:
+            logger.info(f"📭 No context found in {table_name} for company {company_id}")
+            return None
+
+    except Exception as e:
+        logger.error(f"💥 Error retrieving context from {table_name}: {str(e)}")
+        return None
+def retrieve_all_contexts_sync(company_id: int, required_tables: List[str]) -> Dict[str, str]:
+    """Simplified synchronous version"""
+    contexts = {}
+
+    for table_name in required_tables:
+        logger.info(f"🔄 Retrieving context for table: {table_name}")
+        result = retrieve_table_context_sync(company_id, table_name)
+
+        if result is None:
+            contexts[table_name] = ""
+        else:
+            contexts[table_name] = str(result)
+
+        logger.info(f"✅ Table {table_name}: {'Found' if result else 'Empty'}")
+
+    return contexts
+
 @router.post("/retrieve_sql_context", response_model=SQLContextResponse)
 async def retrieve_sql_context_endpoint(request: SQLContextRequest):
-    """
-    Enhanced async endpoint for SQL context retrieval with better concurrency
-    """
+    """Fixed endpoint using sync database operations"""
     request_start_time = time.time()
 
     try:
@@ -363,8 +484,7 @@ async def retrieve_sql_context_endpoint(request: SQLContextRequest):
         if invalid_tables:
             raise HTTPException(status_code=400, detail=f"Invalid tables: {invalid_tables}")
 
-        # Execute company lookup and context retrieval concurrently
-
+        # Get company info synchronously
         company_info = await run_in_threadpool(get_company_info, request.company_ticker)
 
         if not company_info:
@@ -378,35 +498,26 @@ async def retrieve_sql_context_endpoint(request: SQLContextRequest):
 
         logger.info(f"✅ Found company: {company_info['full_name']} (ID: {company_info['id']})")
 
-        # Retrieve contexts from all tables concurrently
-        tasks = [retrieve_table_context_async(company_info["id"], t) for t in request.required_tables]
+        # Retrieve contexts synchronously in thread pool
+        contexts = await run_in_threadpool(retrieve_all_contexts_sync, company_info["id"], request.required_tables)
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Wait for all context retrievals concurrently
-        contexts = {t: r or "" for t, r in zip(request.required_tables, results) if not isinstance(r, Exception)}
-
-        for table, value in contexts.items():
-            if isinstance(value, Exception):
-                logger.error(f"❌ Failed to retrieve context for {table}: {value}")
-            elif value:
-                logger.info(f"✅ Retrieved {table} context: {len(value)} chars")
+        # Log results
+        for table, context in contexts.items():
+            if context:
+                logger.info(f"✅ Retrieved {table} context: {len(context)} chars")
             else:
                 logger.info(f"⚠️ No context found for {table}")
 
         total_duration = time.time() - request_start_time
-        logger.info(
-            f"🎉 Successfully retrieved contexts for {len(contexts)}/{len(request.required_tables)} tables in {total_duration:.2f}s")
+        logger.info(f"🎉 Successfully processed request in {total_duration:.2f}s")
 
-        response = SQLContextResponse(
+        return SQLContextResponse(
             status="success",
             company_ticker=request.company_ticker,
             company_id=company_info['id'],
             company_name=company_info['full_name'],
             contexts=contexts
         )
-
-        return response
 
     except HTTPException:
         raise
