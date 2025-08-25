@@ -301,11 +301,10 @@ def generate_display_only_response(classification: Dict, resolved_companies: Lis
     company_text = ', '.join(company_names)
 
     response_templates = {
-        'pledged_data_analysis': f"Here is the latest pledged data for {company_text}:",
-        'insider_trading_analysis': f"Here are the insider trading details for {company_text}:",
-        'rpt_analysis': f"Here are the related party transactions for {company_text}:",
-        'corporate_governance': f"Here is the corporate governance information for {company_text}:",
-        'dividend_analysis': f"Here is the dividend information for {company_text}:",
+        'pledged_data_analysis': f"Here is the latest pledged data for {company_text}:\n~PLEDGED_DATA_TABLE~",
+        'insider_trading_analysis': f"Here are the insider trading details for {company_text}:\n~INSIDER_TRADING_TABLE~",
+        'rpt_analysis': f"Here are the related party transactions for {company_text}:\n~RPT_TABLE~",
+        'corporate_governance': f"Here is the corporate governance information for {company_text}:\n~CORPORATE_GOVERNANCE_TABLE~",
     }
 
     return response_templates.get(query_type, f"Here is the requested information for {company_text}:")
