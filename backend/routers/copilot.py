@@ -101,6 +101,7 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
 
         if method.upper() == "GET":
             response = requests.get(url, headers=headers, timeout=30)
+            print(f"GET {url} - {response.json()}")
         else:
             response = requests.post(url, json=json_data, headers=headers, timeout=30)
 
@@ -111,10 +112,14 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
 
 
 def is_valid_response(response):
-    """Check if response is valid (not an error)"""
-    return not (isinstance(response, dict) and response.get('error'))
-
-
+    """Check if response is valid (not an error and has data)"""
+    if isinstance(response, dict):
+        if response.get('error'):
+            return False
+        # Check for non-empty 'data' key
+        if 'data' in response and isinstance(response['data'], list):
+            return len(response['data']) > 0
+    return bool(response)
 def get_company_numbers_from_db(resolved_companies: List[Dict[str, Any]]) -> List[int]:
     """Get company_numbers from PostgreSQL using resolved companies."""
     if not resolved_companies:
@@ -510,26 +515,58 @@ async def ask_copilot(request: CopilotRequest):
             chart_data = all_responses[response_idx]
             response_idx += 1
 
+
         elif task_type.startswith('data_'):
-            # Process data endpoint results
+
+            # Process data endpoint results with robust parsing for names containing underscores
+
             data_result = all_responses[response_idx]
-            task_parts = task_type.split('_')
 
-            if len(task_parts) >= 2:
-                data_type = task_parts[1]  # financials, ratios, etc.
+            parts = task_type.split('_')
 
-                if data_type == 'financials':
-                    table_name = task_parts[2] if len(task_parts) > 2 else 'unknown'
-                    if table_name not in consolidated_data['financial_statements']:
-                        consolidated_data['financial_statements'][table_name] = []
-                    consolidated_data['financial_statements'][table_name].append(data_result)
+            # strip leading 'data'
 
-                elif data_type == 'ratios':
-                    company_id = task_parts[2] if len(task_parts) > 2 else 'filtered'
-                    consolidated_data['ratios'][company_id] = data_result
+            parts = parts[1:] if parts and parts[0] == 'data' else parts
 
-                elif data_type in consolidated_data:
-                    consolidated_data[data_type].append(data_result)
+            if not parts:
+                response_idx += 1
+
+                continue
+
+            primary = parts[0]
+
+            if primary == 'financials':
+
+                # table name may contain underscores; company_id is the last token
+
+                company_id = parts[-1] if len(parts) >= 2 else 'unknown'
+
+                table_name = '_'.join(parts[1:-1]) if len(parts) > 2 else 'unknown'
+
+                if table_name not in consolidated_data['financial_statements']:
+                    consolidated_data['financial_statements'][table_name] = []
+
+                consolidated_data['financial_statements'][table_name].append(data_result)
+
+
+            elif primary == 'ratios':
+
+                # company id or 'filtered' is the last token
+
+                company_id = parts[-1] if len(parts) >= 2 else 'filtered'
+
+                consolidated_data['ratios'][company_id] = data_result
+
+
+            else:
+
+                # endpoint types like 'pledged_data', 'insider_trading', 'rpt', 'cg_*' can contain underscores
+
+                data_type = '_'.join(parts[:-1]) if len(parts) > 1 else parts[0]
+
+                consolidated_data.setdefault(data_type, [])
+
+                consolidated_data[data_type].append(data_result)
 
             response_idx += 1
 
@@ -549,7 +586,12 @@ async def ask_copilot(request: CopilotRequest):
     if skip_gemini:
         # Generate simple display-only response
         llm_response_text = generate_display_only_response(classification, resolved_companies)
-        processed_llm_response = [llm_response_text]
+        processed_llm_response = process_llm_response( llm_response_text=llm_response_text,
+                display_recommendations=display_recommendations,
+                classification=classification,
+                company_overviews=company_overviews,
+                consolidated_data=consolidated_data,
+                chart_data=chart_data)
         logger.info("Generated display-only response (no Gemini API call)")
     else:
         # Prepare context data for Gemini
