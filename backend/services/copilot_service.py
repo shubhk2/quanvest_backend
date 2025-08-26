@@ -840,7 +840,54 @@ Based on the available financial information:
 - Use specific data points when available
 - Focus on actionable insights
 - Ensure each point starts with a bullet (e.g., `-`)
-"""
+""",
+        'shareholding_analysis': """{% set no_raw_tables = true %}
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my shareholding analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present shareholding analysis in bullet points only
+
+You are analyzing shareholding patterns and implications.
+
+User Query: "{{question}}"
+
+**Shareholding Pattern Data:**
+
+~SHAREHOLDING_TABLE~
+
+**Shareholding Analysis:**
+
+- **Promoter Holding**
+  - Current promoter shareholding and recent changes
+  - Promoter group pledging or encumbrances
+  - Insider buying/selling trends
+
+- **Institutional & Public Holding**
+  - FII/DII shareholding trends
+  - Mutual fund and insurance company stakes
+  - Public shareholding and retail participation
+
+- **Ownership Structure Implications**
+  - Impact on control and governance
+  - Changes in major shareholders
+  - Implications for stock liquidity and volatility
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key shareholding terms
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on changes and trends in shareholding
+- Reference specific percentages and dates
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
     }
 
     # Prepend system instruction to every template
