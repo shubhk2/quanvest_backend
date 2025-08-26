@@ -15,6 +15,120 @@ import aiohttp
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+import asyncio
+from datetime import datetime
+from pymongo import MongoClient
+from typing import Optional
+
+# ===== 2. ADD MONGODB SETUP AFTER EXISTING IMPORTS =====
+# MongoDB configuration for response storage
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+DB_NAME = os.getenv("DB_NAME", "financial_documents")
+RESPONSE_COLLECTION = os.getenv("RESPONSE_COLLECTION", "copilot_responses")
+
+# Global MongoDB client (initialized lazily)
+mongo_client = None
+response_collection = None
+
+
+def get_response_collection():
+    """Get MongoDB collection for storing responses"""
+    global mongo_client, response_collection
+    if mongo_client is None:
+        try:
+            mongo_client = MongoClient(MONGO_URI)
+            db = mongo_client[DB_NAME]
+            response_collection = db[RESPONSE_COLLECTION]
+            logger.info(f"Connected to MongoDB collection: {RESPONSE_COLLECTION}")
+        except Exception as e:
+            logger.error(f"Failed to connect to MongoDB: {str(e)}")
+            response_collection = None
+    return response_collection
+
+
+async def save_copilot_response(
+        user_query: str,
+        classification: Dict,
+        resolved_companies: List[Dict],
+        llm_response: List[Any],
+        context_info: Dict,
+        response_time_ms: int,
+        gemini_api_used: bool,
+        template_type: str = "unknown",
+        success: bool = True,
+        error_message: str = None
+) -> Optional[str]:
+    """
+    Save copilot response to MongoDB asynchronously
+    Returns: document_id if successful, None if failed
+    """
+    collection = get_response_collection()
+    if collection is None:
+        logger.warning("MongoDB collection not available - skipping response storage")
+        return None
+
+    try:
+        # Extract key information for storage
+        document = {
+            # === INPUT FIELDS (for training) ===
+            "user_query": user_query,
+            "classification": {
+                "query_type": classification.get("query_type"),
+                "data_source_type": classification.get("data_source_type"),
+                "endpoint_type": classification.get("endpoint_type"),
+                "endpoint_mode": classification.get("endpoint_mode"),
+                "is_comparison_query": classification.get("is_comparison_query", False),
+                "company_count": classification.get("company_count", 0),
+                "required_sql_tables": classification.get("required_sql_tables", []),
+                "identified_parameters": classification.get("identified_parameters", {})
+            },
+            "resolved_companies": [
+                {
+                    "ticker": comp.get("ticker"),
+                    "full_name": comp.get("full_name"),
+                    "sector": comp.get("sector")
+                } for comp in resolved_companies
+            ],
+            "template_type": template_type,
+
+            # === OUTPUT FIELDS (training target) ===
+            "llm_response": llm_response,
+            "processed_response_length": len(str(llm_response)),
+            "skip_gemini": not gemini_api_used,
+
+            # === CONTEXT FIELDS (quality factors) ===
+            "combined_context_length": context_info.get("total_context_length", 0),
+            "data_availability": context_info.get("data_availability", {}),
+            "endpoint_routing": context_info.get("endpoint_routing", {}),
+            "parameter_filtering": context_info.get("parameter_filtering", {}),
+
+            # === PERFORMANCE & METADATA ===
+            "timestamp": datetime.utcnow(),
+            "response_time_ms": response_time_ms,
+            "gemini_api_used": gemini_api_used,
+            "success": success,
+            "error_message": error_message,
+
+            # === ADDITIONAL METADATA ===
+            "api_version": "v1",
+            "system_version": "copilot_hybrid_rag"
+        }
+
+        # Store in MongoDB (run in thread pool to avoid blocking)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: collection.insert_one(document)
+        )
+
+        logger.info(f"Saved copilot response to MongoDB: {result.inserted_id}")
+        return str(result.inserted_id)
+
+    except Exception as e:
+        logger.error(f"Failed to save response to MongoDB: {str(e)}")
+        return None
+
+
 
 class CopilotRequest(BaseModel):
     user_query: str
@@ -101,7 +215,7 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
 
         if method.upper() == "GET":
             response = requests.get(url, headers=headers, timeout=30)
-            print(f"GET {url} - {response.json()}")
+            # print(f"GET {url} - {response.json()}")
         else:
             response = requests.post(url, json=json_data, headers=headers, timeout=30)
 
@@ -500,8 +614,8 @@ async def ask_copilot(request: CopilotRequest):
 
         if task_type == 'overview':
             overview_data = all_responses[response_idx]
-            company_overviews.append(overview_data)
-
+            company_overviews.append({"overview":overview_data.get('overview') if overview_data and not overview_data.get('error') else "Overview data not available."})
+            # print("Received overview data:", overview_data,overview_data.get('stats'))
             # Add stats to context if available
             if overview_data and not overview_data.get('error'):
                 stats_obj = overview_data.get('stats')
@@ -583,6 +697,7 @@ async def ask_copilot(request: CopilotRequest):
         }
 
     # Step 10: Generate LLM response or display-only response
+    gemini_result = {}
     if skip_gemini:
         # Generate simple display-only response
         llm_response_text = generate_display_only_response(classification, resolved_companies)
@@ -646,17 +761,17 @@ async def ask_copilot(request: CopilotRequest):
     # Step 11: Return comprehensive response
     total_request_duration = time.time() - request_start_time
     logger.info(f"Total copilot request processed in {total_request_duration:.2f} seconds.")
+    context_info = {}
+    try:
+        # Extract template type from Gemini result if available
+        template_type = "unknown"
+        if not skip_gemini and 'gemini_result' in locals():
+            template_type = gemini_result.get("template_type", "default_financial")
+        elif skip_gemini:
+            template_type = "display_only"
 
-    return {
-        "llm_response": processed_llm_response,
-        "enhanced_context_data": enhanced_context_data,
-        "company_overviews": company_overviews,
-        "chart_data": chart_data,
-        "consolidated_data": consolidated_data,
-        "display_recommendations": display_recommendations,
-        "classification": classification,
-        "company_ids": company_ids_to_use,
-        "context_info": {
+        # Save response asynchronously (don't wait for completion)
+        context_info= {
             "query_type": query_type,
             "is_comparison": is_comparison,
             "skip_gemini": skip_gemini,
@@ -686,6 +801,36 @@ async def ask_copilot(request: CopilotRequest):
             "resolved_companies": enhanced_context_data.get("resolved_companies", []),
             "total_context_length": len(combined_context)
         }
+        asyncio.create_task(
+            save_copilot_response(
+                user_query=request.user_query,
+                classification=classification,
+                resolved_companies=resolved_companies,
+                llm_response=processed_llm_response,
+                context_info=context_info,
+                response_time_ms=int(total_request_duration * 1000),
+                gemini_api_used=not skip_gemini,
+                template_type=template_type,
+                success=True,
+                error_message=None
+            )
+        )
+        logger.info("Started async MongoDB storage task")
+
+    except Exception as storage_error:
+        # Don't let storage errors break the main response
+        logger.error(f"Error initiating MongoDB storage: {str(storage_error)}")
+
+    return {
+        "llm_response": processed_llm_response,
+        "enhanced_context_data": enhanced_context_data,
+        "company_overviews": company_overviews,
+        "chart_data": chart_data,
+        "consolidated_data": consolidated_data,
+        "display_recommendations": display_recommendations,
+        "classification": classification,
+        "company_ids": company_ids_to_use,
+        "context_info": context_info
     }
 
 
