@@ -959,7 +959,7 @@ async def get_copilot_response(
     print(f"DEBUG: Formatted prompt for Gemini (first 500 chars): {formatted_prompt[:500]}...")
 
     # Call Gemini API
-    gemini_api_key = os.getenv("GEMINI_API_KEY_3")
+    gemini_api_key = os.getenv("GEMINI_API_KEY_2")
     if not gemini_api_key:
         print("DEBUG: GEMINI_API_KEY missing")
         return {"error": "GEMINI_API_KEY not set in environment."}
