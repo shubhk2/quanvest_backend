@@ -101,7 +101,7 @@ def make_request(url: str, method: str = "GET", json_data: dict = None, headers:
 
         if method.upper() == "GET":
             response = requests.get(url, headers=headers, timeout=30)
-            print(f"GET {url} - {response.json()}")
+            # print(f"GET {url} - {response.json()}")
         else:
             response = requests.post(url, json=json_data, headers=headers, timeout=30)
 
@@ -500,8 +500,9 @@ async def ask_copilot(request: CopilotRequest):
 
         if task_type == 'overview':
             overview_data = all_responses[response_idx]
-            company_overviews.append(overview_data)
-
+            company_overviews.append({"overview": overview_data.get(
+                'overview') if overview_data and not overview_data.get('error') else "Overview data not available."})
+            # print("Received overview data:", overview_data,overview_data.get('stats'))
             # Add stats to context if available
             if overview_data and not overview_data.get('error'):
                 stats_obj = overview_data.get('stats')
