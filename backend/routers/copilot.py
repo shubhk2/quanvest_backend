@@ -12,6 +12,13 @@ from backend.services.copilot_service import get_copilot_response
 from backend.db_setup import connect_to_db
 import aiohttp
 
+# NEW: imports for session/IP handling
+from fastapi import Request as FastAPIRequest
+from pymongo import MongoClient
+from backend.db_mongo import MONGO_URI, DB_NAME
+from datetime import datetime, timedelta
+import uuid
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -72,6 +79,114 @@ ngrok_headers = {
 }
 
 
+# ===== NEW: Client IP extraction compatible with FastAPI/Starlette =====
+def get_client_ip(request: Optional[FastAPIRequest]) -> str:
+    """Get real client IP behind proxies using FastAPI Request."""
+    try:
+        if not request:
+            return "unknown"
+        # Prefer standard proxy headers
+        xff = request.headers.get('x-forwarded-for') or request.headers.get('X-Forwarded-For')
+        if xff:
+            return xff.split(',')[0].strip()
+        xri = request.headers.get('x-real-ip') or request.headers.get('X-Real-IP')
+        if xri:
+            return xri.strip()
+        # Fallback to connection info
+        return request.client.host if request.client else "unknown"
+    except Exception:
+        return "unknown"
+
+
+# ===== NEW: IP-based session storage in MongoDB =====
+IP_SESSION_COLLECTION = os.getenv("IP_SESSION_COLLECTION", "user_sessions")
+
+
+class IPSessionManager:
+    def __init__(self):
+        self.collection = None
+
+    def get_session_collection(self):
+        if self.collection is None:
+            client = MongoClient(MONGO_URI)
+            db = client[DB_NAME]
+            self.collection = db[IP_SESSION_COLLECTION]
+            # Create TTL index for auto-cleanup on expires_at
+            try:
+                self.collection.create_index("expires_at", expireAfterSeconds=0)
+            except Exception:
+                # Index may already exist
+                pass
+        return self.collection
+
+    async def get_or_create_session(self, ip_address: str) -> Dict:
+        """Get existing active session or create new one."""
+        collection = self.get_session_collection()
+        now = datetime.utcnow()
+
+        # Look for existing active session
+        session = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: collection.find_one({
+                "ip_address": ip_address,
+                "expires_at": {"$gt": now}
+            })
+        )
+
+        if session:
+            # Extend session
+            new_expiry = now + timedelta(hours=2)
+            collection.update_one(
+                {"_id": session["_id"]},
+                {"$set": {"expires_at": new_expiry, "last_activity": now}}
+            )
+            return session
+        else:
+            # Create new session
+            new_session = {
+                "ip_address": ip_address,
+                "session_id": str(uuid.uuid4()),
+                "created_at": now,
+                "last_activity": now,
+                "expires_at": now + timedelta(hours=2),
+                "conversation_history": [],
+                "preferences": {},
+                "query_count": 0
+            }
+            result = collection.insert_one(new_session)
+            new_session["_id"] = result.inserted_id
+            return new_session
+
+    async def update_session_context(self, session_id: str, query: str, response: str):
+        """Add query-response to conversation history, keeping last 10."""
+        collection = self.get_session_collection()
+        print(query)
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: collection.update_one(
+                {"session_id": session_id},
+                {
+                    "$push": {
+                        "conversation_history": {
+                            "$each": [{
+                                "query": query,
+                                "response": response[:500],  # Truncate long responses
+                                "timestamp": datetime.now()
+                            }],
+                            "$slice": -10
+                        }
+                    },
+                    "$inc": {"query_count": 1},
+                    "$set": {"last_activity": datetime.utcnow()}
+                }
+            )
+        )
+
+
+# Global session manager
+session_manager = IPSessionManager()
+
+
 async def make_request_async(url: str, method: str = "POST", json_data: dict = None, headers: dict = None,
                              timeout: int = 20) -> Dict[str, Any]:
     """Async HTTP request to prevent thread pool starvation"""
@@ -120,6 +235,7 @@ def is_valid_response(response):
         if 'data' in response and isinstance(response['data'], list):
             return len(response['data']) > 0
     return bool(response)
+
 def get_company_numbers_from_db(resolved_companies: List[Dict[str, Any]]) -> List[int]:
     """Get company_numbers from PostgreSQL using resolved companies."""
     if not resolved_companies:
@@ -320,10 +436,31 @@ http_sync = make_request
 
 
 @router.post("/ask")
-async def ask_copilot(request: CopilotRequest):
-    """Enhanced copilot with comprehensive endpoint support"""
+async def ask_copilot(request: CopilotRequest, fastapi_request: FastAPIRequest):
+    """Enhanced copilot with comprehensive endpoint support with IP session context."""
     request_start_time = time.time()
     logger.info("Copilot /ask endpoint called with final integration.")
+
+    # ===== NEW: Session retrieval based on client IP =====
+    client_ip = get_client_ip(fastapi_request)
+    try:
+        session = await session_manager.get_or_create_session(client_ip)
+        logger.info(f"Copilot request from IP: {client_ip}, Session: {session['session_id']}")
+    except Exception as e:
+        logger.error(f"Session manager error: {e}")
+        session = {"session_id": "unknown", "conversation_history": [], "query_count": 0}
+
+    # Build conversation context (last 3 interactions)
+    conversation_context = ""
+    try:
+        history = session.get("conversation_history", [])
+        if history:
+            recent_conversations = history[-3:]
+            conversation_context = "\n".join([
+                f"Previous Q: {conv.get('query','')}\n" for conv in recent_conversations
+            ])
+    except Exception:
+        conversation_context = ""
 
     # Step 1: Get enhanced context from Flask
     enhanced_context_data = {}
@@ -347,6 +484,11 @@ async def ask_copilot(request: CopilotRequest):
 
         enhanced_context_data = enhanced_response
         combined_context = enhanced_response.get('combined_context', '')
+        # ===== NEW: prepend conversation history to context =====
+        if conversation_context:
+            combined_context = (
+                f"CONVERSATION HISTORY:\n{conversation_context}\n\nCURRENT QUERY CONTEXT:\n{combined_context}"
+            )
         classification = enhanced_response.get('classification', {})
         display_recommendations = classification.get('display_components', {})
 
@@ -362,6 +504,12 @@ async def ask_copilot(request: CopilotRequest):
             combined_context = f"Query classified as: {request.user_query}\nDataSource: hybrid analysis requested\nNote: Some context retrieval timed out but continuing with available data."
         else:
             combined_context = f"Processing query: {request.user_query}\nFallback context due to retrieval issues."
+
+        # ===== NEW: prepend conversation history to fallback context =====
+        if conversation_context:
+            combined_context = (
+                f"CONVERSATION HISTORY:\n{conversation_context}\n\nCURRENT QUERY CONTEXT:\n{combined_context}"
+            )
 
         display_recommendations = {
             "llm_response": True,
@@ -484,9 +632,9 @@ async def ask_copilot(request: CopilotRequest):
     consolidated_data = {
         'financial_statements': {},
         'ratios': {},
-        'shareholding': [],
         'dividend': [],
         'insider_trading': [],
+        'shareholding_pattern': [],
         'rpt': [],
         'pledged_data': [],
         'corporate_governance': []
@@ -502,7 +650,6 @@ async def ask_copilot(request: CopilotRequest):
             overview_data = all_responses[response_idx]
             company_overviews.append({"overview": overview_data.get(
                 'overview') if overview_data and not overview_data.get('error') else "Overview data not available."})
-            # print("Received overview data:", overview_data,overview_data.get('stats'))
             # Add stats to context if available
             if overview_data and not overview_data.get('error'):
                 stats_obj = overview_data.get('stats')
@@ -516,22 +663,14 @@ async def ask_copilot(request: CopilotRequest):
             chart_data = all_responses[response_idx]
             response_idx += 1
 
-
         elif task_type.startswith('data_'):
-
             # Process data endpoint results with robust parsing for names containing underscores
-
             data_result = all_responses[response_idx]
-
             parts = task_type.split('_')
-
             # strip leading 'data'
-
             parts = parts[1:] if parts and parts[0] == 'data' else parts
-
             if not parts:
                 response_idx += 1
-
                 continue
 
             primary = parts[0]
@@ -549,11 +688,8 @@ async def ask_copilot(request: CopilotRequest):
 
                 consolidated_data['financial_statements'][table_name].append(data_result)
 
-
             elif primary == 'ratios':
-
                 # company id or 'filtered' is the last token
-
                 company_id = parts[-1] if len(parts) >= 2 else 'filtered'
 
                 consolidated_data['ratios'][company_id] = data_result
@@ -609,11 +745,11 @@ async def ask_copilot(request: CopilotRequest):
             "has_financials": bool(consolidated_data['financial_statements']) and any(
                 is_valid_response(d) for table_data in consolidated_data['financial_statements'].values()
                 for d in table_data),
-            "has_shareholding": bool(consolidated_data['shareholding']) and any(
-                is_valid_response(d) for d in consolidated_data['shareholding']),
-            "has_dividend": bool(consolidated_data['dividend']) and any(
+            "has_shareholding": bool(consolidated_data.get('shareholding_pattern')) and any(
+                is_valid_response(d) for d in consolidated_data['shareholding_pattern']),
+            "has_dividend": bool(consolidated_data.get('dividend')) and any(
                 is_valid_response(d) for d in consolidated_data['dividend']),
-            "has_corporate_governance": bool(consolidated_data['corporate_governance']) and any(
+            "has_corporate_governance": bool(consolidated_data.get('corporate_governance')) and any(
                 is_valid_response(d) for d in consolidated_data['corporate_governance']),
             "is_comparison": is_comparison
         }
@@ -648,7 +784,8 @@ async def ask_copilot(request: CopilotRequest):
     total_request_duration = time.time() - request_start_time
     logger.info(f"Total copilot request processed in {total_request_duration:.2f} seconds.")
 
-    return {
+    # Build response payload so we can append session info
+    response_payload = {
         "llm_response": processed_llm_response,
         "enhanced_context_data": enhanced_context_data,
         "company_overviews": company_overviews,
@@ -677,7 +814,7 @@ async def ask_copilot(request: CopilotRequest):
                 "charts": 1 if chart_data and not chart_data.get('error') else 0,
                 "financial_statements": len(consolidated_data.get('financial_statements', {})),
                 "ratios": len(consolidated_data.get('ratios', {})),
-                "shareholding": len(consolidated_data.get('shareholding', [])),
+                "shareholding": len(consolidated_data.get('shareholding_pattern', [])),
                 "dividend": len(consolidated_data.get('dividend', [])),
                 "insider_trading": len(consolidated_data.get('insider_trading', [])),
                 "rpt": len(consolidated_data.get('rpt', [])),
@@ -688,6 +825,28 @@ async def ask_copilot(request: CopilotRequest):
             "total_context_length": len(combined_context)
         }
     }
+
+    # ===== NEW: Update session with new conversation and attach session info =====
+    try:
+        if not skip_gemini and processed_llm_response:
+            response_text = str(processed_llm_response)[:500]
+            await session_manager.update_session_context(
+                session.get("session_id", "unknown"),
+                request.user_query,
+                response_text
+            )
+        # Append session info to response
+        response_payload["context_info"]["session_info"] = {
+            "session_id": session.get("session_id", "unknown"),
+            "query_count": session.get("query_count", 0) + 1,
+            "conversation_length": len(session.get("conversation_history", [])),
+            "client_ip": client_ip
+        }
+    except Exception as e:
+        logger.error(f"Failed to update session info: {e}")
+
+    return response_payload
+
 
 
 def process_llm_response(
