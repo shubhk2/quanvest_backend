@@ -92,6 +92,24 @@ async def make_request_async(url: str, method: str = "POST", json_data: dict = N
     except Exception as e:
         raise Exception(f"Async request to {url} failed: {str(e)}")
 
+async def autocorrect_query_with_typewise(text: str) -> str:
+    url = "https://typewise-ai.p.rapidapi.com/correction/whole_sentence"
+    headers = {
+        "Content-Type": "application/json",
+        "x-rapidapi-host": "typewise-ai.p.rapidapi.com",
+        "x-rapidapi-key": "c6dfcf1965mshf263f17e9e7f2c7p185de0jsn61ed6e618d4f"
+    }
+    payload = {
+        "text": text,
+        "keyboard": "QWERTY",
+        "languages": ["en"]
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            # Adjust this if the API response structure is different
+            return data.get("text", text)
 
 def make_request(url: str, method: str = "GET", json_data: dict = None, headers: dict = None) -> Dict[str, Any]:
     """Synchronous HTTP request"""
@@ -254,8 +272,10 @@ def build_endpoint_tasks(classification: Dict, company_ids_to_use: List[int]) ->
                         "start_year": 2021,
                         "end_year": 2025
                     }
-                    task = lambda p=body_payload, q=query_params: make_request(
-                        f"{url}{q}", "POST", p, standard_headers)
+                    # Bind url as default to avoid late-binding issues
+                    task = lambda p=body_payload, q=query_params, u=url: make_request(
+                        f"{u}{q}", "POST", p, standard_headers
+                    )
                     tasks.append((f'financials_{table}_{company_id}', task))
                 else:
                     full_url = f"{url}?company_number={company_id}&statement_type={table}&start_year=2021&end_year=2025"
@@ -270,7 +290,8 @@ def build_endpoint_tasks(classification: Dict, company_ids_to_use: List[int]) ->
                     "start_year": 2021,
                     "end_year": 2025
                 }
-                task = lambda p=payload: make_request(f"{url}", "POST", p, standard_headers)
+                # Bind url to ensure it stays the ratios URL
+                task = lambda p=payload, u=url: make_request(u, "POST", p, standard_headers)
                 tasks.append(('ratios_filtered', task))
             else:
                 for company_id in company_ids_to_use:
@@ -323,7 +344,9 @@ http_sync = make_request
 async def ask_copilot(request: CopilotRequest):
     """Enhanced copilot with comprehensive endpoint support"""
     request_start_time = time.time()
+    # request.user_query = await autocorrect_query_with_typewise(request.user_query)
     logger.info("Copilot /ask endpoint called with final integration.")
+    # print("Received user query:", request.user_query)
 
     # Step 1: Get enhanced context from Flask
     enhanced_context_data = {}

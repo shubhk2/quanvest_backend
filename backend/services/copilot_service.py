@@ -52,10 +52,11 @@ def highlight_key_parameters(text: str, params: list) -> str:
 
 
 def determine_template_type(user_query: str, context_data: dict = None) -> str:
-    """Enhanced template selection with comprehensive query type support"""
+    """FIXED template selection with proper ratio analysis logic"""
+
     query_lower = user_query.lower()
 
-    # Edge case detection
+    # Edge case detection (unchanged)
     edge_cases = {
         'news': ['news', 'recent news', 'latest news', 'breaking news'],
         'forecasting': ['forecast', 'forecasting', 'predict', 'prediction', 'future', 'valuation',
@@ -83,9 +84,23 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
     has_dividend = context_data.get('has_dividend', False)
     has_corporate_governance = context_data.get('has_corporate_governance', False)
 
-    # Priority-based template selection using query_type
+    # FIXED: Ratio Analysis Template Selection (Priority 1)
+    if query_type == 'ratio_analysis':
+        endpoint_mode = context_data.get('endpoint_mode', 'base')
+        display_components = context_data.get('display_components', {})
 
-    # 1. Domain-specific templates (highest priority)
+        # Determine if it's comprehensive or specific
+        if endpoint_mode == 'parameters':
+            # Has specific parameters
+            if display_components.get('chart', False) and not display_components.get('table', False):
+                return 'ratio_chart_analysis'  # Chart-focused ratio analysis
+            else:
+                return 'ratio_analysis_specific'  # Parameter-specific analysis
+        else:
+            # Full ratios table
+            return 'ratio_analysis_comprehensive'
+
+    # Domain-specific templates (Priority 2)
     if query_type == 'stock_analysis':
         return 'stock_analysis'
     elif query_type == 'dividend_analysis':
@@ -101,14 +116,14 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
     elif query_type == 'shareholder_info':
         return 'shareholding_analysis'
 
-    # 2. Comparison handling (second priority)
+    # Comparison handling (Priority 3)
     if is_comparison or company_count > 1:
         if query_type == 'ratio_analysis':
             return 'multi_company_ratios'
         else:
             return 'comparative_analysis'
 
-    # 3. Chart-focused templates
+    # Chart-focused templates (Priority 4)
     if has_charts:
         if query_type == 'stock_analysis':
             return 'stock_chart_analysis'
@@ -119,13 +134,8 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
         else:
             return 'chart_focused_analysis'
 
-    # 4. Financial statement specific templates
-    if query_type == 'ratio_analysis':
-        if context_data.get('endpoint_mode') == 'parameters':
-            return 'ratio_analysis_specific'
-        else:
-            return 'ratio_analysis_comprehensive'
-    elif query_type == 'balance_sheet':
+    # Financial statement specific templates (Priority 5)
+    if query_type == 'balance_sheet':
         return 'balance_sheet_analysis'
     elif query_type == 'profit_and_loss':
         return 'profit_loss_analysis'
@@ -134,7 +144,7 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
     elif query_type == 'comprehensive':
         return 'comprehensive_financial_analysis'
 
-    # 5. Company overview and defaults
+    # Company overview and defaults (Priority 6)
     if query_type == 'company_overview' or 'overview' in query_lower:
         return 'company_overview'
     elif context_data.get('endpoint_mode') == 'parameters':
@@ -236,6 +246,100 @@ User Query: "{{question}}"
 - Use specific numbers when available
 - Present all analysis as concise bullet points
 - Ensure each point starts with a bullet (e.g., `-`)
+""",'ratio_analysis_specific': """{% set no_raw_tables = true %}
+
+{% if context_data.is_comparison %}
+NOTE: This appears to be a comparison query. I'll adapt my ratio analysis to compare multiple companies.
+{% endif %}
+
+IMPORTANT • Present specific ratio analysis in bullet points
+
+You are conducting targeted financial ratio analysis.
+
+User Query: "{{question}}"
+
+**Specific Ratio Analysis:**
+
+~RATIOS_TABLE~
+
+**Ratio Interpretation:**
+
+- **Selected Ratios Analysis**
+  - Detailed analysis of requested ratio parameters
+  - Current values and historical trends
+  - Industry benchmark comparisons
+
+- **Performance Insights**
+  - What these specific ratios reveal about financial health
+  - Strengths and weaknesses identified
+  - Areas requiring management attention
+
+- **Strategic Implications**
+  - How these ratios impact investment decisions
+  - Risk factors highlighted by ratio analysis
+  - Operational efficiency indicators
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key ratio names and values
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on the specific ratios requested
+- Provide detailed interpretation of values
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+
+""",
+
+'ratio_chart_analysis': """{% set no_raw_tables = true %}
+
+IMPORTANT • Present ratio chart analysis in bullet points
+
+You are analyzing financial ratio trends and patterns.
+
+User Query: "{{question}}"
+
+**Ratio Trend Analysis:**
+
+~CHARTS_SECTION~
+
+**Chart-Based Insights:**
+
+- **Trend Patterns**
+  - Key trends visible in ratio progression
+  - Seasonal or cyclical patterns identified
+  - Inflection points and trend changes
+
+- **Performance Trajectory**
+  - Improving vs declining ratio trends
+  - Volatility and consistency analysis
+  - Comparative performance over time
+
+- **Strategic Assessment**
+  - What trends suggest about management effectiveness
+  - Future performance predictors from current trends
+  - Risk indicators from ratio volatility
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key trend insights
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on visual trend analysis
+- Interpret chart patterns and movements
+- Use bullet points for all analysis
+- Ensure each point starts with a bullet (e.g., `-`)
+
 """,
 
         'stock_analysis': """{% set no_raw_tables = true %}
@@ -841,6 +945,136 @@ Based on the available financial information:
 - Focus on actionable insights
 - Ensure each point starts with a bullet (e.g., `-`)
 """,
+
+        'chart_focused_analysis': """{% set no_raw_tables = true %}
+IMPORTANT • Present chart-focused analysis in bullet points only
+
+You are analyzing financial data with a focus on visual chart trends.
+
+User Query: "{{question}}"
+
+**Chart-Focused Analysis:**
+
+~CHARTS_SECTION~
+
+**Key Insights:**
+
+- **Trend Identification**
+  - Major upward or downward movements
+  - Notable inflection points and reversals
+  - Volatility and consistency in data
+
+- **Performance Patterns**
+  - Seasonal or cyclical trends
+  - Correlation with key events or announcements
+  - Outlier periods and anomalies
+
+- **Strategic Implications**
+  - What the chart trends suggest about company performance
+  - Forward-looking signals from visual data
+  - Risk and opportunity areas highlighted by charts
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key chart terms and trends
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on insights visible in the charts
+- Do not repeat tabular data
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
+        'stock_chart_analysis': """{% set no_raw_tables = true %}
+IMPORTANT • Present stock chart analysis in bullet points only
+
+You are analyzing stock price charts and related technical indicators.
+
+User Query: "{{question}}"
+
+**Stock Chart Analysis:**
+
+~STOCK_CHART_SECTION~
+
+**Technical Insights:**
+
+- **Price Action**
+  - Recent price trends and momentum
+  - Key support and resistance levels
+  - Notable breakouts or breakdowns
+
+- **Volume & Indicators**
+  - Volume spikes and their implications
+  - Moving averages (DMA50, DMA200) crossovers
+  - RSI, MACD, or other technical signals
+
+- **Market Sentiment**
+  - Bullish or bearish patterns
+  - Investor sentiment inferred from chart
+  - Comparison with sector or index trends
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key technical terms and levels
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on actionable technical insights
+- Reference specific price levels and chart patterns
+- Ensure each point starts with a bullet (e.g, `-`)
+""",
+
+        'trend_analysis_with_charts': """{% set no_raw_tables = true %}
+IMPORTANT • Present trend analysis with charts in bullet points only
+
+You are analyzing financial or stock trends using visual chart data.
+
+User Query: "{{question}}"
+
+**Trend Analysis with Charts:**
+
+~CHARTS_SECTION~
+
+**Trend Insights:**
+
+- **Growth or Decline Patterns**
+  - Sustained upward or downward trends
+  - Acceleration or deceleration in growth
+  - Periods of stability or volatility
+
+- **Comparative Trends**
+  - How trends compare to previous periods
+  - Sector or peer group trend alignment
+  - Divergence from market averages
+
+- **Strategic Takeaways**
+  - What the trends imply for future performance
+  - Early warning signals or opportunity indicators
+  - Management actions suggested by trend data
+
+**Supporting Context:**
+{{context}}
+
+**Formatting Rules:**
+- Use bullet points exclusively
+- Bold key trend terms and periods
+- Never use markdown tables
+- Reference placeholders: ~PLACEHOLDER_NAME~
+
+**Instructions:**
+- Focus on trend direction and implications
+- Use specific timeframes and data points
+- Ensure each point starts with a bullet (e.g., `-`)
+""",
+
         'shareholding_analysis': """{% set no_raw_tables = true %}
 {% if context_data.is_comparison %}
 NOTE: This appears to be a comparison query. I'll adapt my shareholding analysis to compare multiple companies.
@@ -886,7 +1120,7 @@ User Query: "{{question}}"
 - Focus on changes and trends in shareholding
 - Reference specific percentages and dates
 - Use bullet points for all analysis
-- Ensure each point starts with a bullet (e.g., `-`)
+- Ensure each point starts with a bullet (e.g, `-`)
 """,
     }
 
