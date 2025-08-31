@@ -670,10 +670,11 @@ async def ask_copilot(request: CopilotRequest):
     # Step 11: Return comprehensive response
     total_request_duration = time.time() - request_start_time
     logger.info(f"Total copilot request processed in {total_request_duration:.2f} seconds.")
-
+    final_response = dict(enhanced_context_data)  # Make a shallow copy
+    final_response.pop('combined_context', None)
     return {
         "llm_response": processed_llm_response,
-        "enhanced_context_data": enhanced_context_data,
+        "enhanced_context_data": final_response,
         "company_overviews": company_overviews,
         "chart_data": chart_data,
         "consolidated_data": consolidated_data,
