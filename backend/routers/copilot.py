@@ -511,6 +511,7 @@ async def ask_copilot(request: CopilotRequest):
         'insider_trading': [],
         'rpt': [],
         'pledged_data': [],
+        'ratios': [],
         'corporate_governance': []
     }
 
