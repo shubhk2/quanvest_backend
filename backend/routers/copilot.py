@@ -295,7 +295,7 @@ def build_endpoint_tasks(classification: Dict, company_ids_to_use: List[int]) ->
                 tasks.append(('ratios_filtered', task))
             else:
                 for company_id in company_ids_to_use:
-                    full_url = f"{url}?company_number={company_id}&start_year=2021&end_year=2025"
+                    full_url = f"{url}?company_numbers={company_id}&start_year=2021&end_year=2025"
                     task = lambda u=full_url: make_request(u, "GET", headers=standard_headers)
                     tasks.append((f'ratios_{company_id}', task))
 

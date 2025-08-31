@@ -158,17 +158,23 @@ def determine_template_type(user_query: str, context_data: dict = None) -> str:
 def get_template_content(template_type: str) -> str:
     """Return enhanced Jinja2 template content with comprehensive template coverage"""
 
-    # System instruction for all templates
+    # STRENGTHENED system instruction for all templates
     system_instruction = (
-        "SYSTEM: Only answer the user's real query if the provided context is relevant and sufficient. "
-        "If the context is not relevant or does not contain the required information, do NOT fabricate or repeat the context. "
-        "Always follow the rules and formatting instructions for the current query type. "
-        "If the context is not needed for the query, ignore it and answer as per the rules. "
-        "Do not provide a response just because context is present; respond only if it is appropriate and required.\n\n"
+        "SYSTEM INSTRUCTIONS:\n"
+        "1. NEVER include raw financial data, numbers, or tabular information in your response\n"
+        "2. NEVER create your own tables or list specific financial values\n"
+        "3. NEVER repeat the quantitative data from the context\n"
+        "4. The tables and charts will be displayed separately using placeholders from our backend only\n"
+        "5. Your job is to provide ANALYSIS and INTERPRETATION only\n"
+        "6. Use placeholders exactly as shown in templates - they will be replaced with actual tables\n"
+
         "CRITICAL PLACEHOLDER RULES:\n"
-        "- Insert each placeholder exactly once and only where shown in the template below.\n"
-        "- Do not invent or duplicate placeholders.\n"
-        "- Placeholders must appear on their own line with no surrounding prose or bullets.\n\n"
+        "- Insert each placeholder exactly once and only where shown in the template below\n"
+        "- Do not invent or duplicate placeholders\n"
+        "- Placeholders must appear on their own line with no surrounding prose or bullets\n"
+        "REQUIRED APPROACH:\n"
+        "- Focus on what the data means for business performance\n"
+        "- Use bullet points for clear structure\n\n"
     )
 
     templates = {
@@ -246,54 +252,36 @@ User Query: "{{question}}"
 - Use specific numbers when available
 - Present all analysis as concise bullet points
 - Ensure each point starts with a bullet (e.g., `-`)
-""",'ratio_analysis_specific': """{% set no_raw_tables = true %}
-
-{% if context_data.is_comparison %}
-NOTE: This appears to be a comparison query. I'll adapt my ratio analysis to compare multiple companies.
-{% endif %}
-
-IMPORTANT • Present specific ratio analysis in bullet points
-
+""",'ratio_analysis_specific': """
 You are conducting targeted financial ratio analysis.
 
 User Query: "{{question}}"
 
-**Specific Ratio Analysis:**
-
 ~RATIOS_TABLE~
 
-**Ratio Interpretation:**
+**Strategic Insights:**
+- **Performance Assessment** - Key strengths and weaknesses from the ratio data
+- **Trend Analysis** - Notable patterns or trajectory changes 
+- **Investment Perspective** - What these metrics mean for investors
+- **Risk Factors** - Areas of concern highlighted by the ratios
 
-- **Selected Ratios Analysis**
-  - Detailed analysis of requested ratio parameters
-  - Current values and historical trends
-  - Industry benchmark comparisons
-
-- **Performance Insights**
-  - What these specific ratios reveal about financial health
-  - Strengths and weaknesses identified
-  - Areas requiring management attention
-
-- **Strategic Implications**
-  - How these ratios impact investment decisions
-  - Risk factors highlighted by ratio analysis
-  - Operational efficiency indicators
-
-**Supporting Context:**
 {{context}}
+""",
 
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key ratio names and values
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
+        'ratio_analysis_comprehensive': """
+You are conducting comprehensive financial ratio analysis.
 
-**Instructions:**
-- Focus on the specific ratios requested
-- Provide detailed interpretation of values
-- Use bullet points for all analysis
-- Ensure each point starts with a bullet (e.g., `-`)
+User Query: "{{question}}"
 
+~COMPREHENSIVE_RATIOS_TABLE~
+
+**Financial Health Assessment:**
+- **Profitability** - Revenue efficiency and return metrics analysis
+- **Liquidity & Solvency** - Short-term flexibility and debt management  
+- **Efficiency** - Asset utilization and working capital effectiveness
+- **Market Valuation** - Valuation multiples and market positioning
+
+{{context}}
 """,
 
 'ratio_chart_analysis': """{% set no_raw_tables = true %}
@@ -725,59 +713,6 @@ User Query: "{{question}}"
 - Provide clear comparative insights
 - Rank companies by performance categories
 - Use specific metrics and percentages
-- Ensure each point starts with a bullet (e.g., `-`)
-""",
-
-        'ratio_analysis_comprehensive': """{% set no_raw_tables = true %}
-{% if context_data.is_comparison %}
-NOTE: This appears to be a comparison query. I'll adapt my ratio analysis to compare multiple companies.
-{% endif %}
-
-IMPORTANT • Present comprehensive ratio analysis in bullet points
-
-You are conducting detailed financial ratio analysis.
-
-User Query: "{{question}}"
-
-**Comprehensive Ratio Analysis:**
-
-~COMPREHENSIVE_RATIOS_TABLE~
-
-**Financial Health Assessment:**
-
-- **Profitability Analysis**
-  - Revenue efficiency and margin trends
-  - Return on capital metrics (ROE, ROA, ROIC)
-  - Earnings quality and sustainability
-
-- **Liquidity & Solvency**
-  - Short-term financial flexibility
-  - Debt management and leverage ratios
-  - Cash flow adequacy ratios
-
-- **Efficiency Metrics**
-  - Asset utilization effectiveness
-  - Working capital management
-  - Inventory and receivables turnover
-
-- **Market Valuation**
-  - P/E, P/B, and EV multiples
-  - Dividend yield and payout ratios
-  - Market premium/discount analysis
-
-**Supporting Context:**
-{{context}}
-
-**Formatting Rules:**
-- Use bullet points exclusively
-- Bold key ratio categories
-- Never use markdown tables
-- Reference placeholders: ~PLACEHOLDER_NAME~
-
-**Instructions:**
-- Provide integrated ratio interpretation
-- Connect ratios to business fundamentals
-- Use industry benchmarking context
 - Ensure each point starts with a bullet (e.g., `-`)
 """,
 
