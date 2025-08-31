@@ -506,7 +506,6 @@ async def ask_copilot(request: CopilotRequest):
     chart_data = {}
     consolidated_data = {
         'financial_statements': {},
-        'ratios': {},
         'shareholding': [],
         'dividend': [],
         'insider_trading': [],
@@ -577,9 +576,9 @@ async def ask_copilot(request: CopilotRequest):
 
                 # company id or 'filtered' is the last token
 
-                company_id = parts[-1] if len(parts) >= 2 else 'filtered'
+                # company_id = parts[-1] if len(parts) >= 2 else 'filtered'
 
-                consolidated_data['ratios'][company_id] = data_result
+                consolidated_data['ratios']=data_result
 
 
             else:
@@ -628,7 +627,7 @@ async def ask_copilot(request: CopilotRequest):
             "company_count": len(company_ids_to_use) if company_ids_to_use else 0,
             "has_charts": bool(chart_data and not chart_data.get('error')),
             "has_ratios": bool(consolidated_data['ratios']) and any(
-                is_valid_response(d) for d in consolidated_data['ratios'].values()),
+                is_valid_response(d) for d in consolidated_data['ratios']),
             "has_financials": bool(consolidated_data['financial_statements']) and any(
                 is_valid_response(d) for table_data in consolidated_data['financial_statements'].values()
                 for d in table_data),
@@ -806,7 +805,7 @@ def process_llm_response(
                 elif placeholder in ['~RATIOS_TABLE~', '~COMPREHENSIVE_RATIOS_TABLE~', '~COMPARISON_TABLE~']:
                     table_type = "ratios"
                     data_available = bool(consolidated_data.get('ratios')) and any(
-                        is_valid_response(d) for d in consolidated_data['ratios'].values())
+                        is_valid_response(d) for d in consolidated_data['ratios'])
 
                 elif placeholder in ['~FINANCIAL_PARAMETERS_TABLE~', '~FINANCIAL_DATA_TABLE~']:
                     table_type = "financials"
