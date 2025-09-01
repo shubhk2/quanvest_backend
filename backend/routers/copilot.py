@@ -506,7 +506,7 @@ async def ask_copilot(request: CopilotRequest):
     chart_data = {}
     consolidated_data = {
         'financial_statements': {},
-        'shareholding': [],
+        'shareholding_pattern': [],
         'dividend': [],
         'insider_trading': [],
         'rpt': [],
@@ -632,8 +632,8 @@ async def ask_copilot(request: CopilotRequest):
             "has_financials": bool(consolidated_data['financial_statements']) and any(
                 is_valid_response(d) for table_data in consolidated_data['financial_statements'].values()
                 for d in table_data),
-            "has_shareholding": bool(consolidated_data['shareholding']) and any(
-                is_valid_response(d) for d in consolidated_data['shareholding']),
+            "has_shareholding": bool(consolidated_data['shareholding_pattern']) and any(
+                is_valid_response(d) for d in consolidated_data['shareholding_pattern']),
             "has_dividend": bool(consolidated_data['dividend']) and any(
                 is_valid_response(d) for d in consolidated_data['dividend']),
             "has_corporate_governance": bool(consolidated_data['corporate_governance']) and any(
@@ -701,7 +701,7 @@ async def ask_copilot(request: CopilotRequest):
                 "charts": 1 if chart_data and not chart_data.get('error') else 0,
                 "financial_statements": len(consolidated_data.get('financial_statements', {})),
                 "ratios": len(consolidated_data.get('ratios', {})),
-                "shareholding": len(consolidated_data.get('shareholding', [])),
+                "shareholding": len(consolidated_data.get('shareholding_pattern', [])),
                 "dividend": len(consolidated_data.get('dividend', [])),
                 "insider_trading": len(consolidated_data.get('insider_trading', [])),
                 "rpt": len(consolidated_data.get('rpt', [])),
@@ -775,8 +775,8 @@ def process_llm_response(
 
                 elif placeholder == '~SHAREHOLDING_TABLE~':
                     table_type = "shareholding"
-                    data_available = bool(consolidated_data.get('shareholding')) and any(
-                        is_valid_response(d) for d in consolidated_data['shareholding'])
+                    data_available = bool(consolidated_data.get('shareholding_pattern')) and any(
+                        is_valid_response(d) for d in consolidated_data['shareholding_pattern'])
 
                 elif placeholder == '~DIVIDEND_TABLE~':
                     table_type = "dividend"
