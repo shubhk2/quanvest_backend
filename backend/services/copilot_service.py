@@ -248,12 +248,11 @@ User Query: "{{question}}"
 - Reference placeholders: ~PLACEHOLDER_NAME~
 
 **Instructions:**
-- Focus on strategic insights not covered in overview table
 - Use specific numbers when available
 - Present all analysis as concise bullet points
 - Ensure each point starts with a bullet (e.g., `-`)
 """,'ratio_analysis_specific': """
-You are conducting targeted financial ratio analysis.
+You are conducting targeted financial ratio analysis.Use the numbers in the response when available.
 
 User Query: "{{question}}"
 
@@ -269,7 +268,7 @@ User Query: "{{question}}"
 """,
 
         'ratio_analysis_comprehensive': """
-You are conducting comprehensive financial ratio analysis.
+You are conducting comprehensive financial ratio analysis.Use the numbers in the response when available.
 
 User Query: "{{question}}"
 
