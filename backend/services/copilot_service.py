@@ -2,7 +2,6 @@ import os
 import asyncio
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 from jinja2 import Template
 
